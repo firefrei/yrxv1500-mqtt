@@ -1,0 +1,310 @@
+###
+# ...  extend your home assistand basic configuration with:
+###
+
+mqtt:
+  broker: 'mqtt-broker.local'
+  username: 'mqtt-user'
+  password: !secret mqtt__broker_password
+
+
+input_select:
+  yamaha_rx_v1500_channels:
+    name: 'Yamaha RX-V1500 Eingang'
+    options:
+      - 'phono'
+      - 'cd'
+      - 'tuner'
+      - 'cdr'
+      - 'md-tape'
+      - 'dvd'
+      - 'dtv'
+      - 'cbl-sat'
+      - 'vcr1'
+      - 'dvr-vcr2'
+      - 'vaux'
+    icon: 'mdi:import'
+
+  yamaha_rx_v1500_input_mode:
+    name: 'Yamaha RX-V1500 Input Mode'
+    options:
+      - 'auto'
+      - 'dts'
+      - 'analog'
+    icon: 'mdi:surround-sound-5-1'
+
+  yamaha_rx_v1500_osd:
+    name: 'Yamaha RX-V1500 OSD'
+    options:
+      - 'off'
+      - 'short'
+      - 'full'
+    icon: 'mdi:fullscreen'
+
+  yamaha_rx_v1500_dsp:
+    name: 'Yamaha RX-V1500 DSP'
+    options:
+      - 'straight'
+      - 'concert hall'
+      - 'jazz club'
+      - 'rock concert'
+      - 'disco'
+      - 'game'
+      - 'music video'
+      - 'mono movie'
+      - 'variety sports'
+      - 'spectacle'
+      - 'sci-fi'
+      - 'adventure'
+      - 'general'
+      - 'thx cinema'
+      - 'pro logic sur standard'
+      - 'pro logic sur enhanced'
+      - 'pro logic II movie'
+      - 'pro logic II music'
+      - 'pro logic II game'
+      - 'dts neo 6 cinema'
+      - 'dts neo 6 music'
+      - '2ch stereo'
+      - 'direct stereo'
+      - '7ch stereo'
+    icon: 'mdi:map-marker'
+
+
+sensor:
+  - platform: mqtt
+    unique_id: 'yamaha_rxv1500_playback_format'
+    name: 'Yamaha RX-V1500 Playback Format'
+    state_topic: 'yamaha-rxv1500/yamahapi/playback-format'
+  - platform: mqtt
+    unique_id: 'yamaha_rxv1500_playback_bitrate'
+    name: 'Yamaha RX-V1500 Playback Bitrate'
+    state_topic: 'yamaha-rxv1500/yamahapi/playback-bitrate'
+
+
+media_player:
+  - platform: universal
+    name: 'speaker_yamaha_rxv1500'
+    device_class: receiver
+    attributes:
+      state: switch.yamaha_rx_v1500_power
+      source: input_select.yamaha_rx_v1500_channels
+      source_list: input_select.yamaha_rx_v1500_channels|options
+      volume_level: number.yamaha_rx_v1500_output_volume
+      is_volume_muted: switch.yamaha_rx_v1500_mute
+      sound_mode: input_select.yamaha_rx_v1500_dsp
+      sound_mode_list: input_select.yamaha_rx_v1500_dsp|options
+    commands:
+      turn_on:
+        service: switch.turn_on
+        entity_id: switch.yamaha_rx_v1500_power
+      turn_off:
+        service: switch.turn_off
+        entity_id: switch.yamaha_rx_v1500_power
+      volume_mute:
+        service: switch.toggle
+        target:
+          entity_id: switch.yamaha_rx_v1500_mute
+      volume_set:
+        service: number.set_value
+        target:
+          entity_id: number.yamaha_rx_v1500_output_volume
+        data:
+          value: '{{ volume_level }}'
+      volume_up:
+        service: number.increment
+        target:
+          entity_id: number.yamaha_rx_v1500_output_volume
+      volume_down:
+        service: number.decrement
+        target:
+          entity_id: number.yamaha_rx_v1500_output_volume
+      select_source:
+        service: input_select.select_option
+        target:
+          entity_id: input_select.yamaha_rx_v1500_channels
+        data:
+          option: '{{ source }}'
+      select_sound_mode:
+        service: input_select.select_option
+        target:
+          entity_id: input_select.yamaha_rx_v1500_dsp
+        data:
+          option: '{{ sound_mode }}'
+
+
+switch:
+  - platform: mqtt
+    unique_id: 'yamaha_rx_v1500_power'
+    name: 'Yamaha RX-V1500 Power'
+    state_topic: 'yamaha-rxv1500/yamahapi/power'
+    command_topic: 'yamaha-rxv1500/yamahapi/power/set'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:power'
+  - platform: mqtt
+    unique_id: 'yamaha_power_zone_1'
+    name: 'Yamaha RX-V1500 Power Zone 1'
+    state_topic: 'yamaha-rxv1500/yamahapi/power-zone-1'
+    command_topic: 'yamaha-rxv1500/yamahapi/power-zone-1/set'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:power'
+  - platform: mqtt
+    unique_id: 'yamaha_power_zone_2'
+    name: 'Yamaha RX-V1500 Power Zone 2'
+    state_topic: 'yamaha-rxv1500/yamahapi/power-zone-2'
+    command_topic: 'yamaha-rxv1500/yamahapi/power-zone-2/set'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:power'
+  - platform: mqtt
+    unique_id: 'yamaha_rx_v1500_mute'
+    name: 'Yamaha RX-V1500 Mute'
+    state_topic: 'yamaha-rxv1500/yamahapi/mute'
+    command_topic: 'yamaha-rxv1500/yamahapi/mute/set'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:volume-mute'
+  - platform: mqtt
+    unique_id: 'yamaha_rxv1500_speakers_a'
+    name: 'Yamaha RX-V1500 Speakers A'
+    state_topic: 'yamaha-rxv1500/yamahapi/speakers-a'
+    command_topic: 'yamaha-rxv1500/yamahapi/speakers-a/set'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:speaker'
+  - platform: mqtt
+    unique_id: 'yamaha_rxv1500_speakers_b'
+    name: 'Yamaha RX-V1500 Speakers B'
+    state_topic: 'yamaha-rxv1500/yamahapi/speakers-b'
+    command_topic: 'yamaha-rxv1500/yamahapi/speakers-b/set'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:speaker'
+
+
+binary_sensor:
+  - platform: mqtt
+    unique_id: 'yamaha_rxv1500_headphone'
+    name: 'Yamaha RX-V1500 Headphone'
+    state_topic: 'yamaha-rxv1500/yamahapi/headphone'
+    payload_on: 'on'
+    payload_off: 'off'
+    icon: 'mdi:headphone'
+
+
+number:
+  - platform: mqtt
+    unique_id: 'yamaha_rx_v1500_output_volume'
+    name: 'Yamaha RX-V1500 Volume'
+    state_topic: 'yamaha-rxv1500/yamahapi/output-volume'
+    command_topic: 'yamaha-rxv1500/yamahapi/output-volume/set'
+    icon: 'mdi:volume'
+    min: -80
+    max: -20
+    step: 0.5
+  - platform: mqtt
+    unique_id: 'yamaha_rxv1500_tuner_preset'
+    name: 'Yamaha RX-V1500 Tuner Preset'
+    state_topic: 'yamaha-rxv1500/yamahapi/tuner-preset'
+    command_topic: 'yamaha-rxv1500/yamahapi/tuner-preset/set'
+    icon: 'mdi:tune'
+    min: 1
+    max: 8
+    step: 1
+
+
+#
+# AUTOMATION
+#
+automation:
+  # AUTOMATION:   media/yamaha-rxv1500/input-source
+  - alias: yamaha_rx_v1500_input_source_state
+    trigger:
+      - platform: mqtt
+        topic: 'yamaha-rxv1500/yamahapi/input-source'
+    action:
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.yamaha_rx_v1500_channels
+        data_template:
+          option: '{{ trigger.payload }}'
+  
+  - alias: yamaha_rx_v1500_input_source_command
+    trigger:
+      - platform: state
+        entity_id: input_select.yamaha_rx_v1500_channels
+    action:
+      - service: mqtt.publish
+        data:
+          topic: 'yamaha-rxv1500/yamahapi/input-source/set'
+          payload_template: '{{ trigger.to_state.state }}'
+
+  # AUTOMATION:   media/yamaha-rxv1500/input-mode
+  - alias: yamaha_rx_v1500_input_mode_state
+    trigger:
+      - platform: mqtt
+        topic: 'yamaha-rxv1500/yamahapi/input-mode'
+    action:
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.yamaha_rx_v1500_input_mode
+        data_template:
+          option: '{{ trigger.payload }}'
+  
+  - alias: yamaha_rx_v1500_input_mode_command
+    trigger:
+      - platform: state
+        entity_id: input_select.yamaha_rx_v1500_input_mode
+    action:
+      - service: mqtt.publish
+        data:
+          topic: 'yamaha-rxv1500/yamahapi/input-mode/set'
+          payload_template: '{{ trigger.to_state.state }}'
+
+  # AUTOMATION:   media/yamaha-rxv1500/osd
+  - alias: yamaha_rx_v1500_osd_state
+    trigger:
+      - platform: mqtt
+        topic: 'yamaha-rxv1500/yamahapi/osd'
+    action:
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.yamaha_rx_v1500_osd
+        data_template:
+          option: '{{ trigger.payload }}'
+  
+  - alias: yamaha_rx_v1500_osd_command
+    trigger:
+      - platform: state
+        entity_id: input_select.yamaha_rx_v1500_osd
+    action:
+      - service: mqtt.publish
+        data:
+          topic: 'yamaha-rxv1500/yamahapi/osd/set'
+          payload_template: '{{ trigger.to_state.state }}'
+  
+  # AUTOMATION:   media/yamaha-rxv1500/dsp
+  - alias: yamaha_rx_v1500_dsp_state
+    trigger:
+      - platform: mqtt
+        topic: 'yamaha-rxv1500/yamahapi/dsp'
+    action:
+      - service: input_select.select_option
+        target:
+          entity_id: input_select.yamaha_rx_v1500_dsp
+        data_template:
+          option: '{{ trigger.payload }}'
+  
+  - alias: yamaha_rx_v1500_dsp_command
+    trigger:
+      - platform: state
+        entity_id: input_select.yamaha_rx_v1500_dsp
+    action:
+      - service: mqtt.publish
+        data:
+          topic: 'yamaha-rxv1500/yamahapi/dsp/set'
+          payload_template: '{{ trigger.to_state.state }}'
+
+
