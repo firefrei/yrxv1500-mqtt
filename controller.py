@@ -313,9 +313,9 @@ class YamahaControl:
       self.controller.mqtt.publish_state(self.topic_state, new_db_val, retain=True)
 
     def write_rc(self, vol_new):
-      if LIMIT_VOLUME is not None and vol_new > LIMIT_VOLUME:
-        vol_new = LIMIT_VOLUME
-        self.controller.log.info("[V] Volume changed to limit: %d" %(vol_new))
+      if LIMIT_VOLUME is not None and float(vol_new) > LIMIT_VOLUME:
+        vol_new = float(LIMIT_VOLUME)
+        self.controller.log.info("[V] Volume limit reached. Changed value to: %d" % (vol_new))
       
       # Process volume from -dB string to hex
       step = 0.5
