@@ -650,7 +650,7 @@ class YamahaControl:
 
         # If 'End of Line' (ETX) reached -> start evaluation
         if char_byte == ETX:
-          self.log.debug('[RcRead] line: ' + str(line))
+          self.log.debug('[RcRead] line: >>%s<<' % (line))
           
           if line[0] == STX.decode("utf-8"):
             self.log.debug('[RcRead] General Report')
@@ -846,4 +846,4 @@ if __name__ == '__main__':
   signal(SIGINT, sigint_handler)
   
   # Start blocking mqtt loop
-  CONTROLLER.mqtt.handle.loop_forever()
+  CONTROLLER.mqtt.handle.loop_forever(retry_first_connection=True)
