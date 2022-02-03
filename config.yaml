@@ -1,0 +1,18 @@
+mqtt:
+  host: 'mqtt-broker.local'
+  port: 1883
+  username: 'mqtt-user'
+  password: ''
+  topic_prefix: 'yamaha-rxv1500'
+  client_id: 'rxv1500-mqtt'
+
+serial:
+  device: '/dev/ttyUSB0'
+
+limits:
+  volume: -20  # or None
+
+logging:
+  root:
+    level: DEBUG
+    handlers: [console]

@@ -5,38 +5,23 @@
 #
 
 import logging
-#
-# USER SETTINGS
-#
-MQTT_BROKER_HOST = 'mqtt-broker.local'
-MQTT_BROKER_PORT = 1883
-MQTT_TOPIC_PREFIX = 'yamaha-rxv1500'
-MQTT_CLIENT_ID = 'raspi'
-MQTT_BROKER_USERNAME = 'mqtt-user'
-MQTT_BROKER_PASSWORD = '********'
-RS232_DEVICE = '/dev/ttyUSB0'
-LOG_LEVEL = logging.INFO
-LIMIT_VOLUME = -20  # or None
-
-
-
-########## Do not change anything below this line 
-#################################################
-
 import time
 import re
 import threading
 import socket
 from signal import signal, SIGINT
+from types import SimpleNamespace
 
 # Install packages for RS232 and MQTT connection, if required
 try:
+  import yaml
   import serial
   from paho.mqtt import client as mqtt_client
 except:
   print("Installing python package dependencies...")
   pip_install = subprocess.Popen(["pip3", "install", "-r", "requirements.txt"])
   pip_install.communicate()
+  import yaml
   import serial
   from paho.mqtt import client as mqtt_client
 
@@ -50,6 +35,56 @@ DC4 = b'\x14'  # Device Control 4
 DEL = b'\x7F'  # Delete
 
 
+def __default(obj, attr, default):
+  if not hasattr(obj, attr):
+    setattr(obj, attr, default)
+
+
+class Config:
+  """Class for parsing `config.yaml`."""
+
+  def __init__(self, file='config.yaml'):
+    """Initialize Config class and read config file."""
+    logging.debug("Reading %s", file)
+    try:
+      with open(file, 'r') as filehandle:
+        config = yaml.load(filehandle, Loader=yaml.SafeLoader)
+        if "logging" in config:
+          logging.config.dictConfig(config["logging"])
+        self._parse_mqtt(config)
+        self._parse_serial(config)
+        self._parse_limits(config)
+        
+    except FileNotFoundError as ex:
+      logging.error("Configuration file %s not found: %s", file, ex)
+      exit(ex.errno)
+
+  def _parse_mqtt(self, config):
+    if not "mqtt" in config:
+      logging.error("MQTT configuration not found in configuration file.")
+      exit(1)
+    self.mqtt = SimpleNamespace(**config["mqtt"])
+    
+    if not hasattr(self.mqtt, "host"):
+      raise ValueError("MQTT broker not defined!")
+
+    __default(self.mqtt, "client_id", "rxv1500-mqtt")
+    __default(self.mqtt, "topic_prefix", "")
+    __default(self.mqtt, "port", 1883)
+    __default(self.mqtt, "username", "")
+    __default(self.mqtt, "password", "")
+    __default(self.mqtt, "qos", 0)
+    __default(self.mqtt, "retain", False)
+    __default(self.mqtt, "keepalive", 60)
+  
+  def _parse_serial(self, config):
+    self.serial = SimpleNamespace(**config["serial"] if "serial" in config else {})
+    __default(self.serial, "device", "/dev/ttyUSB0")
+  
+  def _parse_limits(self, config):
+    self.limits = SimpleNamespace(**config["limits"] if "limits" in config else {})
+    __default(self.limits, "volume", -20) # or None
+
 
 class YamahaControl:
   """
@@ -59,7 +94,7 @@ class YamahaControl:
   class RemoteEventSubscription:
     def __init__(self, controller, topic_extension, on_event_callback, state_only=False):
       self.controller = controller
-      self.topic_state = str("%s/%s/%s" % (MQTT_TOPIC_PREFIX, MQTT_CLIENT_ID, topic_extension))
+      self.topic_state = str("%s/%s/%s" % (CONFIG.mqtt.topic_prefix, CONFIG.mqtt.client_id, topic_extension))
       self.on_event_callback = on_event_callback
       self.state_only = state_only
 
@@ -330,8 +365,8 @@ class YamahaControl:
       self.subscription.publish_state(self.subscription.topic_state, new_db_val, retain=True)
 
     def write_rc(self, vol_new):
-      if LIMIT_VOLUME is not None and float(vol_new) > LIMIT_VOLUME:
-        vol_new = float(LIMIT_VOLUME)
+      if CONFIG.limits.volume is not None and float(vol_new) > CONFIG.limits.volume:
+        vol_new = float(CONFIG.limits.volume)
         self.controller.log.info("[V] Volume limit reached. Changed value to: %d" % (vol_new))
       
       # Process volume from -dB string to hex
@@ -359,11 +394,10 @@ class YamahaControl:
 
     # Setup logging
     self.log = logging.getLogger("Controller")
-    self.log.setLevel(LOG_LEVEL)
     self.log.info("Starting YamahaControl...")
     
     # Setup physical device access via serial connection
-    self.rs232 = RS232Client(RS232_DEVICE)
+    self.rs232 = RS232Client(CONFIG.serial.device)
 
     # Setup MQTT client
     # Callback: Generate rc event list which registers MQTT subscriptions
@@ -749,7 +783,6 @@ class RS232Client:
 
   def __init__(self, device):
     self.log = logging.getLogger("RS232")
-    self.log.setLevel(LOG_LEVEL)
     self.conn = serial.Serial()
     self.device = device
 
@@ -832,7 +865,6 @@ class MqttClient:
 
   def __init__(self, on_connect_callback, on_disconnect_callback):
     self.log = logging.getLogger("MQTT")
-    self.log.setLevel(LOG_LEVEL)
 
     self.on_connect_callback = on_connect_callback
     self.on_disconnect_callback = on_disconnect_callback
@@ -848,8 +880,8 @@ class MqttClient:
 
   def connect_mqtt(self):
     # Set Connecting Client ID
-    client = mqtt_client.Client(MQTT_CLIENT_ID)
-    client.username_pw_set(MQTT_BROKER_USERNAME, MQTT_BROKER_PASSWORD)
+    client = mqtt_client.Client(CONFIG.mqtt.client_id)
+    client.username_pw_set(CONFIG.mqtt.username, CONFIG.mqtt.password)
     client.reconnect_delay_set(min_delay=1, max_delay=120)
     client.on_connect = self.on_connect
     client.on_disconnect = self.on_disconnect
@@ -857,7 +889,7 @@ class MqttClient:
     # Try to connect to mqtt broker
     while True:
       try:
-        client.connect(MQTT_BROKER_HOST, port=MQTT_BROKER_PORT, keepalive=60)
+        client.connect(CONFIG.mqtt.host, port=CONFIG.mqtt.port, keepalive=CONFIG.mqtt.keepalive)
         break
       except socket.gaierror as err:
         self.log.warning("Could not resolve or reach MQTT broker. Going to try again... (Reason: %s)" % str(err))
@@ -869,7 +901,7 @@ class MqttClient:
 
   def on_connect(self, client, userdata, flags, rc):
     if rc == 0:
-        self.log.info("Connected to MQTT broker >>%s<<" % (MQTT_BROKER_HOST))
+        self.log.info("Connected to MQTT broker >>%s<<" % (CONFIG.mqtt.host))
         self.on_connect_callback()
     else:
         self.log.error("Failed to connect, return code >>%d<<", rc)
@@ -898,6 +930,7 @@ def sigint_handler(signal_received, frame):
 
 if __name__ == '__main__':
   logging.basicConfig()
+  CONFIG = Config()
   CONTROLLER = YamahaControl()
   
   # Run the sigint_handler() function when SIGINT singal is recieved
