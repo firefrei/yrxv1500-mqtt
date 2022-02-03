@@ -5,6 +5,7 @@
 #
 
 import logging
+import logging.config
 import time
 import re
 import threading
