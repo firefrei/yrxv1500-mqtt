@@ -13,6 +13,6 @@ limits:
   volume: -20  # or None
 
 logging:
+  incremental: true
   root:
-    level: DEBUG
-    handlers: [console]
+    level: INFO
