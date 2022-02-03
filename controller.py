@@ -390,7 +390,7 @@ class YamahaControl:
     """
 
     # Setup logging
-    self.log = logging.getLogger("Controller")
+    self.log = logging.getLogger("controller")
     self.log.info("Starting YamahaControl...")
     
     # Setup physical device access via serial connection
