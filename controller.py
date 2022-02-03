@@ -41,7 +41,7 @@ class Config:
 
   def __init__(self, file='config.yaml'):
     """Initialize Config class and read config file."""
-    logging.debug("Reading %s", file)
+    logging.info("Reading %s", file)
     try:
       with open(file, 'r') as filehandle:
         config = yaml.load(filehandle, Loader=yaml.SafeLoader)
@@ -779,7 +779,7 @@ class YamahaControl:
 class RS232Client:
 
   def __init__(self, device):
-    self.log = logging.getLogger("RS232")
+    self.log = logging.getLogger("serial")
     self.conn = serial.Serial()
     self.device = device
 
@@ -861,7 +861,7 @@ class RS232Client:
 class MqttClient:
 
   def __init__(self, on_connect_callback, on_disconnect_callback):
-    self.log = logging.getLogger("MQTT")
+    self.log = logging.getLogger("mqtt")
 
     self.on_connect_callback = on_connect_callback
     self.on_disconnect_callback = on_disconnect_callback
