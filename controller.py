@@ -10,7 +10,7 @@ import logging
 #
 MQTT_BROKER_HOST = 'mqtt-broker.local'
 MQTT_BROKER_PORT = 1883
-MQTT_TOPIC_PREFIX = "yamaha-rxv1500"
+MQTT_TOPIC_PREFIX = 'yamaha-rxv1500'
 MQTT_CLIENT_ID = 'raspi'
 MQTT_BROKER_USERNAME = 'mqtt-user'
 MQTT_BROKER_PASSWORD = '********'
@@ -23,13 +23,11 @@ LIMIT_VOLUME = -20  # or None
 ########## Do not change anything below this line 
 #################################################
 
-
-import datetime
 import time
 import re
 import threading
+import socket
 from signal import signal, SIGINT
-from paho.mqtt import client as mqtt_client
 
 # Install packages for RS232 connection
 try:
@@ -40,7 +38,15 @@ except:
   pip_install.communicate()
 import serial
 
-# RS232 control patterns
+try:
+  from paho.mqtt import client as mqtt_client
+except:
+  print("Installing python package 'paho-mqtt'...")
+  pip_install = subprocess.Popen(["pip3", "install", "paho-mqtt"])
+  pip_install.communicate()
+from paho.mqtt import client as mqtt_client
+
+
 STX = b'\x02'  # Start of Text
 ETX = b'\x03'  # End of Text
 DC1 = b'\x11'  # Device Control 1
@@ -56,6 +62,38 @@ class YamahaControl:
   This is the main class of the Controller. __init__() will initialize all components.
   """
 
+  class RemoteEventSubscription:
+    def __init__(self, controller, topic_extension, on_event_callback, state_only=False):
+      self.controller = controller
+      self.topic_state = str("%s/%s/%s" % (MQTT_TOPIC_PREFIX, MQTT_CLIENT_ID, topic_extension))
+      self.on_event_callback = on_event_callback
+      self.state_only = state_only
+
+      # functions alias
+      self.publish_state = self.controller.mqtt.publish_state
+
+    def subscribe(self):
+      self.controller.log.info("Publishing states for topic: %s" % str(self.topic_state))
+
+      # Subscribe for command topic
+      if not self.state_only:
+        self.topic_command = str("%s/%s" % (self.topic_state, "set"))
+        self.controller.mqtt.handle.subscribe(self.topic_command, qos=1)
+        self.controller.mqtt.handle.message_callback_add(self.topic_command, self.on_event_callback)
+        self.controller.log.info("Registered listener for topic: %s" % str(self.topic_command))
+      else:
+        self.topic_command = None
+
+    def unsubscribe(self):
+      if self.controller.mqtt and self.topic_command:
+        self.controller.mqtt.handle.message_callback_remove(self.topic_command)
+        self.controller.mqtt.handle.unsubscribe(self.topic_command)
+        self.controller.log.info("Removed listener for topic: %s" % str(self.topic_command))
+
+    def __str__(self):
+      return str("RemoteEventSubscription: %s" % self.topic_state)
+
+
   class EntityBase:
     """
     Base class for each configuration entity
@@ -65,38 +103,22 @@ class YamahaControl:
     }
     
     def __init__(self, controller, topic_extension, state_only=False):
+      self.name = topic_extension
       self.controller = controller
-      self.topic_state = str("%s/%s/%s" % (MQTT_TOPIC_PREFIX, MQTT_CLIENT_ID, topic_extension))
-      self.controller.log.info("Publishing states for topic: %s" % str(self.topic_state))
-
-      # Subscribe for command topic
-      if not state_only:
-        self.topic_command = str("%s/%s" % (self.topic_state, "set"))
-        self.controller.mqtt.handle.subscribe(self.topic_command, qos=1)
-        self.controller.mqtt.handle.message_callback_add(self.topic_command, self.on_mqtt_cmd_for_rc)
-        self.controller.log.info("Registered listener for topic: %s" % str(self.topic_command))
-      else:
-        self.topic_command = None
-
-    def __del__(self):
-      self.terminate()
-
-    def terminate(self):
-      if self.controller.mqtt and self.topic_command:
-        self.controller.mqtt.handle.message_callback_remove(self.topic_command)
-        self.controller.mqtt.handle.unsubscribe(self.topic_command)
+      
+      self.subscription = YamahaControl.RemoteEventSubscription(self.controller, topic_extension, self.on_mqtt_cmd_for_rc, state_only)
+      self.controller.remote_subscriptions.add(self.subscription)
 
     def __str__(self):
-      raise NotImplementedError
-
+      return str("Entity: %s" % self.name)
 
     def on_rc_state_update(self, state):
       self.controller.log.info("[RcState] State: " + str(state))
       if state in self.options and len(self.options[state]) > 0:
-        self.controller.log.info("[RcState] Going to publish state >>%s<< for topic >>%s<<" % (str(self.options[state][0]), self.topic_state))
+        self.controller.log.info("[RcState] Going to publish state >>%s<< for topic >>%s<<" % (str(self.options[state][0]), self.subscription.topic_state))
 
         # Publish new receiver state with mqtt
-        self.controller.mqtt.publish_state(self.topic_state, self.options[state][0], retain=True)
+        self.subscription.publish_state(self.subscription.topic_state, self.options[state][0], retain=True)
       else:
         raise NotImplementedError
 
@@ -104,12 +126,13 @@ class YamahaControl:
       for opt in self.options.values():
         if opt[0] == state:
           if opt[1] is not None:
-            self.controller.log.info('[WriteRc] Setting >>' + str(self) + '<< (' + str(self.topic_state) + ') to >>' + str(state) + '<<.')
+            self.controller.log.info('[WriteRc] Setting >>' + str(self) + '<< (' + str(self.subscription.topic_state) + ') to >>' + str(state) + '<<.')
             self.controller.rs232.write(opt[1])
           return
       raise NotImplementedError
     
     def on_mqtt_cmd_for_rc(self, mqtt_client, userdata, message): #event_name, data, kwargs):
+      #self.controller.log.debug("[MqttMessage] EVENT: " + str(message.topic) + " with " + str(userdata))
       state_new = message.payload.decode("utf-8")
       
       self.controller.log.info("[MqttMessage] Processing command >>" + str(message.topic) + "<< with data >>" + str(state_new) + "<<")
@@ -126,7 +149,7 @@ class YamahaControl:
       return self.name
     
     def on_rc_state_update(self, state):
-      self.controller.mqtt.publish_state(self.topic_state, state, retain=True)
+      self.subscription.publish_state(self.subscription.topic_state, state, retain=True)
 
     def write_rc(self, state):
       self.controller.log.info("ERROR! Write on GenericSensor is not allowed! Tried: %s" % (state))
@@ -140,14 +163,14 @@ class YamahaControl:
     }
     def write_rc(self, state):
       if state == 'on':
-        self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(self.topic_state) + ') to "' + str(state) + '".')
+        self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(self.subscription.topic_state) + ') to "' + str(state) + '".')
         self.controller.rs232.write(DC1.decode("utf-8") + "000")
         self.controller.rs232.write("20000")
         self.controller.rs232.write("20100")
         self.controller.rs232.write(self.options['On'][1])
         return
       elif state == 'off':
-        self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(self.topic_state) + ') to "' + str(state) + '".')
+        self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(self.subscription.topic_state) + ') to "' + str(state) + '".')
         self.controller.rs232.write(self.options['Off'][1])
         return
       else:
@@ -310,7 +333,7 @@ class YamahaControl:
       new_db_val = (YamahaControl.hex_to_dec(vol_str) * step) - 99.5
 
       # Update state
-      self.controller.mqtt.publish_state(self.topic_state, new_db_val, retain=True)
+      self.subscription.publish_state(self.subscription.topic_state, new_db_val, retain=True)
 
     def write_rc(self, vol_new):
       if LIMIT_VOLUME is not None and float(vol_new) > LIMIT_VOLUME:
@@ -349,8 +372,38 @@ class YamahaControl:
     self.rs232 = RS232Client(RS232_DEVICE)
 
     # Setup MQTT client
-    self.mqtt = MqttClient()
+    # Callback: Generate rc event list which registers MQTT subscriptions
+    self.remote_subscriptions = set()
+    self.rc_event_list = None
+    self.mqtt = MqttClient(self._setup_rc_event_list, self._clear_remote_subscriptions)
+    
+    # start thread
+    self.serialReaderEnabled = True
+    self.serialReadThread = threading.Thread(target=self.reader)
+    self.serialReadThread.start()
 
+  def __del__(self):
+    """
+    Destructor of Controller
+    """
+    self._clear_remote_subscriptions()
+    self.terminate()
+  
+  def terminate(self):
+    if self.mqtt:
+      self.log.info("Terminating MQTT connection...")
+      self.mqtt.terminate()
+    self.mqtt = None
+
+    if self.rs232:
+      self.log.info("Terminating RS232 connection...")
+      self.serialReaderEnabled = False
+      self.serialReadThread.join()
+
+      self.rs232.terminate()
+    self.rs232 = None
+
+  def _setup_rc_event_list(self):
     # Define possible events/messages from RX-V1500 and initialize Entity Objects
     self.rc_event_list = {
       '00':{
@@ -604,35 +657,22 @@ class YamahaControl:
         '_content':'Z1',
         '_object': YamahaControl.PowerZone1Entity(self, "power-zone-1")
         }
-      }
-
-    # start thread
-    self.serialReaderEnabled = True
-    self.serialReadThread = threading.Thread(target=self.reader)
-    self.serialReadThread.start()
-
-  def __del__(self):
-    """
-    Destructor of Controller
-    """
-    self.terminate()
+    }
   
-  def terminate(self):
-    if self.mqtt:
-      self.log.info("Terminating MQTT connection...")
-      self.mqtt.terminate()
-    self.mqtt = None
+    # Finally, create subscriptions at remote broker
+    self._create_remote_subscriptions()
 
-    if self.rs232:
-      self.log.info("Terminating RS232 connection...")
-      self.serialReaderEnabled = False
-      self.serialReadThread.join()
+  def _create_remote_subscriptions(self):
+    for sub in self.remote_subscriptions:
+      sub.subscribe()
 
-      self.rs232.terminate()
-    self.rs232 = None
+  def _clear_remote_subscriptions(self):
+    for sub in self.remote_subscriptions:
+      sub.unsubscribe()
+    self.remote_subscriptions = set()
 
   # Serial port reader
-  # Good reference: https://github.com/memphi2/homie-yamaha-rs232/blob/master/src/main.cpp
+  # Good code example: https://github.com/memphi2/homie-yamaha-rs232/blob/master/src/main.cpp
   def reader(self):
     line = ""
     
@@ -651,7 +691,7 @@ class YamahaControl:
         # If 'End of Line' (ETX) reached -> start evaluation
         if char_byte == ETX:
           self.log.debug('[RcRead] line: >>%s<<' % (line))
-          
+
           if line[0] == STX.decode("utf-8"):
             self.log.debug('[RcRead] General Report')
 
@@ -683,6 +723,14 @@ class YamahaControl:
             except Exception as e:
               self.log.warning("[RcRead] Unhandled exception in loop: " + str(e))
 
+          elif line[0] == DC1.decode("utf-8"):
+            self.log.debug('[RcRead] Unrecognised Report with DC1')
+          elif line[0] == DC2.decode("utf-8"):
+            self.log.debug('[RcRead] Unrecognised Report with DC2')
+          elif line[0] == DC3.decode("utf-8"):
+            self.log.debug('[RcRead] Unrecognised Report with DC3')
+          elif line[0] == DC4.decode("utf-8"):
+            self.log.debug('[RcRead] Unrecognised Report with DC4')
           else:
             self.log.warning('[RcRead] Unrecognised Report')
           
@@ -788,9 +836,12 @@ class RS232Client:
 
 class MqttClient:
 
-  def __init__(self):
+  def __init__(self, on_connect_callback, on_disconnect_callback):
     self.log = logging.getLogger("MQTT")
     self.log.setLevel(LOG_LEVEL)
+
+    self.on_connect_callback = on_connect_callback
+    self.on_disconnect_callback = on_disconnect_callback
     self.handle = self.connect_mqtt()
 
   def __del__(self):
@@ -805,24 +856,37 @@ class MqttClient:
     # Set Connecting Client ID
     client = mqtt_client.Client(MQTT_CLIENT_ID)
     client.username_pw_set(MQTT_BROKER_USERNAME, MQTT_BROKER_PASSWORD)
+    client.reconnect_delay_set(min_delay=1, max_delay=120)
     client.on_connect = self.on_connect
     client.on_disconnect = self.on_disconnect
-    client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT)
+
+    # Try to connect to mqtt broker
+    while True:
+      try:
+        client.connect(MQTT_BROKER_HOST, port=MQTT_BROKER_PORT, keepalive=60)
+        break
+      except socket.gaierror as err:
+        self.log.warning("Could not resolve or reach MQTT broker. Going to try again... (Reason: %s)" % str(err))
+        time.sleep(1)
+      except BaseException:
+        raise
+ 
     return client
-  
+
   def on_connect(self, client, userdata, flags, rc):
     if rc == 0:
         self.log.info("Connected to MQTT broker >>%s<<" % (MQTT_BROKER_HOST))
+        self.on_connect_callback()
     else:
         self.log.error("Failed to connect, return code >>%d<<", rc)
-  
+
   def on_disconnect(self, client, userdata, rc):
     if rc == 0:
         self.log.info("Disconnected from MQTT broker")
-        client.loop_stop()
     else:
         self.log.warning("Unexpected disconnetion from MQTT broker, return code >>%d<<", rc)
-  
+    self.on_disconnect_callback()
+
   def publish_state(self, topic_state, state_new, qos=0, retain=False):
     self.log.info('Publishing state change of >>' + str(topic_state) + '<< to >>' + str(state_new) + '<<.')
     self.handle.publish(topic_state, payload=state_new, qos=qos, retain=retain)
