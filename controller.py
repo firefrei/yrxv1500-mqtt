@@ -46,8 +46,8 @@ class Config:
       with open(file, 'r') as filehandle:
         config = yaml.load(filehandle, Loader=yaml.SafeLoader)
         if "logging" in config:
-          logging_config = config["logging"].setdefault('version', 1)
-          logging.config.dictConfig(logging_config)
+          config["logging"].setdefault('version', 1)
+          logging.config.dictConfig(config["logging"])
         self._parse_mqtt(config)
         self._parse_serial(config)
         self._parse_limits(config)
