@@ -16,8 +16,8 @@ Use it on your own risk! The tool is provided as-is, with no guarantee that the 
 
 ### Usage
 Easy: 
-1. Download `controller.py` or clone this repository
-2. Edit/create the `config.yaml` file and place it in the same folder.
+1. Clone this repository
+2. Edit the `config.yaml` file
 3. Run `python3 controller.py`
 
 As service using systemd: 
@@ -26,6 +26,7 @@ As service using systemd:
 3. Link and enable systemd config:
 ```
 sudo ln -s /srv/yrxv1500-mqtt/systemd/yrxv1500-mqtt.service /etc/systemd/system/yrxv1500-mqtt.service
+sudo systemctl daemon-reload
 sudo systemctl enable yrxv1500-mqtt.service
 sudo systemctl start yrxv1500-mqtt.service
 ```
