@@ -36,11 +36,6 @@ DC4 = b'\x14'  # Device Control 4
 DEL = b'\x7F'  # Delete
 
 
-def __default(obj, attr, default):
-  if not hasattr(obj, attr):
-    setattr(obj, attr, default)
-
-
 class Config:
   """Class for parsing `config.yaml`."""
 
@@ -51,7 +46,8 @@ class Config:
       with open(file, 'r') as filehandle:
         config = yaml.load(filehandle, Loader=yaml.SafeLoader)
         if "logging" in config:
-          logging.config.dictConfig(config["logging"])
+          logging_config = config["logging"].setdefault('version', 1)
+          logging.config.dictConfig(logging_config)
         self._parse_mqtt(config)
         self._parse_serial(config)
         self._parse_limits(config)
@@ -69,22 +65,22 @@ class Config:
     if not hasattr(self.mqtt, "host"):
       raise ValueError("MQTT broker not defined!")
 
-    __default(self.mqtt, "client_id", "rxv1500-mqtt")
-    __default(self.mqtt, "topic_prefix", "")
-    __default(self.mqtt, "port", 1883)
-    __default(self.mqtt, "username", "")
-    __default(self.mqtt, "password", "")
-    __default(self.mqtt, "qos", 0)
-    __default(self.mqtt, "retain", False)
-    __default(self.mqtt, "keepalive", 60)
+    self.mqtt.__dict__.setdefault("client_id", "rxv1500-mqtt")
+    self.mqtt.__dict__.setdefault("topic_prefix", "")
+    self.mqtt.__dict__.setdefault("port", 1883)
+    self.mqtt.__dict__.setdefault("username", "")
+    self.mqtt.__dict__.setdefault("password", "")
+    self.mqtt.__dict__.setdefault("qos", 0)
+    self.mqtt.__dict__.setdefault("retain", False)
+    self.mqtt.__dict__.setdefault("keepalive", 60)
   
   def _parse_serial(self, config):
     self.serial = SimpleNamespace(**config["serial"] if "serial" in config else {})
-    __default(self.serial, "device", "/dev/ttyUSB0")
+    self.serial.__dict__.setdefault("device", "/dev/ttyUSB0")
   
   def _parse_limits(self, config):
     self.limits = SimpleNamespace(**config["limits"] if "limits" in config else {})
-    __default(self.limits, "volume", -20) # or None
+    self.limits.__dict__.setdefault("volume", -20) # or None
 
 
 class YamahaControl:
