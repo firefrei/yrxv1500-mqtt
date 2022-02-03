@@ -29,22 +29,16 @@ import threading
 import socket
 from signal import signal, SIGINT
 
-# Install packages for RS232 connection
+# Install packages for RS232 and MQTT connection, if required
 try:
   import serial
-except:
-  print("Installing python package 'pyserial'...")
-  pip_install = subprocess.Popen(["pip3", "install", "pyserial"])
-  pip_install.communicate()
-import serial
-
-try:
   from paho.mqtt import client as mqtt_client
 except:
-  print("Installing python package 'paho-mqtt'...")
-  pip_install = subprocess.Popen(["pip3", "install", "paho-mqtt"])
+  print("Installing python package dependencies...")
+  pip_install = subprocess.Popen(["pip3", "install", "-r", "requirements.txt"])
   pip_install.communicate()
-from paho.mqtt import client as mqtt_client
+  import serial
+  from paho.mqtt import client as mqtt_client
 
 
 STX = b'\x02'  # Start of Text
