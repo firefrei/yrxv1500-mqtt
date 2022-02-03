@@ -10,17 +10,19 @@ Use it on your own risk! The tool is provided as-is, with no guarantee that the 
 - Yamaha RX-V1500 A/V-Reciever
 - Raspberry Pi (or similar) with RS232 interface or USB<->RS232 converter
 - Python3
-- Python3 library 'pyserial' (will be installed by this tool on startup)
+- Python3 library `pyserial` (will be installed by this tool on startup)
+- Python3 library `pyyaml` (will be installed by this tool on startup)
+- Python3 library `paho-mqtt` (will be installed by this tool on startup)
 
 ### Usage
 Easy: 
 1. Download `controller.py` or clone this repository
-2. Edit configuration in header of file
+2. Edit/create the `config.yaml` file and place it in the same folder.
 3. Run `python3 controller.py`
 
 As service using systemd: 
 1. Same as *Easy*, but don't run manually.
-2. Edit file `systemd/yrxv1500-mqtt.service` and change file path of *controller.py* to your needs (defaults to `/srv/yrxv1500-mqtt/controller.py`)
+2. Edit file `systemd/yrxv1500-mqtt.service` and change working directory and file path of *controller.py* to your needs (defaults to `/srv/yrxv1500-mqtt/controller.py`)
 3. Link and enable systemd config:
 ```
 sudo ln -s /srv/yrxv1500-mqtt/systemd/yrxv1500-mqtt.service /etc/systemd/system/yrxv1500-mqtt.service
