@@ -4,12 +4,12 @@
 # Control a Yamaha RX-V1500 receiver connected via RS232 using MQTT
 #
 
-import asyncio
+
 import logging
 import logging.config
 import time
 import re
-import threading
+import subprocess
 import socket
 import json
 from signal import signal, SIGINT
@@ -17,15 +17,17 @@ from types import SimpleNamespace
 
 # Install packages for RS232 and MQTT connection, if required
 try:
+  import asyncio
   import yaml
-  import serial
+  import serial_asyncio
   from paho.mqtt import client as mqtt_client
 except:
   print("Installing python package dependencies...")
   pip_install = subprocess.Popen(["pip3", "install", "-r", "requirements.txt"])
   pip_install.communicate()
+  import asyncio
   import yaml
-  import serial
+  import serial_asyncio
   from paho.mqtt import client as mqtt_client
 
 
@@ -203,12 +205,12 @@ class YamahaControl:
       else:
         raise NotImplementedError
 
-    def write_rc(self, state):
+    async def write_rc(self, state):
       for opt in self.options.values():
         if opt[0] == state:
           if opt[1] is not None:
             self.controller.log.info('[WriteRc] Setting >>' + str(self) + '<< (' + str(self.subscription.topic_state) + ') to >>' + str(state) + '<<.')
-            self.controller.rs232.write(opt[1])
+            await self.controller.rs232.write(opt[1])
           return
       raise NotImplementedError
     
@@ -217,7 +219,7 @@ class YamahaControl:
       state_new = message.payload.decode("utf-8")
       
       self.controller.log.info("[MqttMessage] Processing command >>" + str(message.topic) + "<< with data >>" + str(state_new) + "<<")
-      self.write_rc(state_new)
+      self.controller.loop.create_task(self.write_rc(state_new))
 
     def mqtt_discovery_config(self, device_class=None, icon=None):
       if device_class is None:
@@ -250,7 +252,7 @@ class YamahaControl:
     def on_rc_state_update(self, state):
       self.subscription.publish_state(self.subscription.topic_state, state, retain=True)
 
-    def write_rc(self, state):
+    async def write_rc(self, state):
       self.controller.log.info("ERROR! Write on GenericSensor is not allowed! Tried: %s" % (state))
 
 
@@ -260,17 +262,17 @@ class YamahaControl:
       'On': ('on', '07a1d'),  # Power On
       'Off': ('off', '07a1e') # Power Off
     }
-    def write_rc(self, state):
+    async def write_rc(self, state):
       if state == 'on':
         self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(self.subscription.topic_state) + ') to "' + str(state) + '".')
-        self.controller.rs232.write(DC1.decode("utf-8") + "000")
-        self.controller.rs232.write("20000")
-        self.controller.rs232.write("20100")
-        self.controller.rs232.write(self.options['On'][1])
+        await self.controller.rs232.write(DC1.decode("utf-8") + "000")
+        await self.controller.rs232.write("20000")
+        await self.controller.rs232.write("20100")
+        await self.controller.rs232.write(self.options['On'][1])
         return
       elif state == 'off':
         self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(self.subscription.topic_state) + ') to "' + str(state) + '".')
-        self.controller.rs232.write(self.options['Off'][1])
+        await self.controller.rs232.write(self.options['Off'][1])
         return
       else:
         raise NotImplementedError
@@ -414,10 +416,10 @@ class YamahaControl:
     def __str__(self):
       return str("Tuner Preset")
 
-    def write_rc(self, state):
+    async def write_rc(self, state):
       # Format in HA: '2.0' (string) -> only use '2'
       if len(state) > 0:        
-        super().write_rc(state[0])
+       await super().write_rc(state[0])
 
   class OsdEntity(EntityBase):
     options = {
@@ -486,7 +488,7 @@ class YamahaControl:
       # Update state
       self.subscription.publish_state(self.subscription.topic_state, new_db_val, retain=True)
 
-    def write_rc(self, vol_new):
+    async def write_rc(self, vol_new):
       if CONFIG.limits.volume is not None and float(vol_new) > CONFIG.limits.volume:
         vol_new = float(CONFIG.limits.volume)
         self.controller.log.info("[V] Volume limit reached. Changed value to: %d" % (vol_new))
@@ -496,7 +498,7 @@ class YamahaControl:
       new_normed = int((float(vol_new) + 99.5) / step)
       raw_db_val = str(str(YamahaControl.dec_to_hex(new_normed))[2:]).upper()
       self.controller.log.debug("[V] Volume to set: %s" % str(raw_db_val))
-      self.controller.rs232.write("230" + str(raw_db_val))
+      await self.controller.rs232.write("230" + str(raw_db_val))
 
   
   class MuteEntity(EntityBase):
@@ -526,18 +528,13 @@ class YamahaControl:
     self.loop = asyncio.get_event_loop()
 
     # Setup physical device access via serial connection
-    self.rs232 = RS232Client(CONFIG.serial.device)
+    self.rs232 = self.loop.run_until_complete(SerialClient(self.loop, CONFIG.serial, self.process_serial_data).run())
 
     # Setup MQTT client
     # Callback: Generate rc event list which registers MQTT subscriptions
     self.remote_subscriptions = set()
     self.rc_event_list = None
     self.mqtt = self.loop.run_until_complete(MqttClient(self.loop, self._setup_rc_event_list, self._clear_remote_subscriptions).run())
-    
-    # start thread
-    self.serialReaderEnabled = True
-    self.serialReadThread = threading.Thread(target=self.reader)
-    self.serialReadThread.start()
 
   def __del__(self):
     """
@@ -560,9 +557,6 @@ class YamahaControl:
 
     if self.rs232:
       self.log.info("Terminating RS232 connection...")
-      self.serialReaderEnabled = False
-      self.serialReadThread.join()
-
       self.rs232.terminate()
     self.rs232 = None
     
@@ -843,72 +837,68 @@ class YamahaControl:
 
   # Serial port reader
   # Good code example: https://github.com/memphi2/homie-yamaha-rs232/blob/master/src/main.cpp
-  def reader(self):
+  async def process_serial_data(self, data):
     line = ""
     
     parmre = re.compile('(.)(.)(.)(..)(..)')
-    self.log.info("[RcRead] Waiting for message in read-loop...")
-    while self.serialReaderEnabled:
-      serial_buf = self.rs232.read(8)
-      for char_byte in serial.iterbytes(serial_buf):
-        #self.log.debug("[RcRead] char_byte: "+ str(char_byte))
+    for char_byte in self.rs232.iterbytes(data):
+      #self.log.debug("[RcRead] char_byte: "+ str(char_byte))
 
-        # Reset read-buffer if device control byte or 'Start of Line' (STX) read
-        if char_byte == DC1 or char_byte == DC2 or char_byte == DC3 or char_byte == DC4 or char_byte == STX:
-          line = char_byte.decode("utf-8")
-          continue
+      # Reset read-buffer if device control byte or 'Start of Line' (STX) read
+      if char_byte == DC1 or char_byte == DC2 or char_byte == DC3 or char_byte == DC4 or char_byte == STX:
+        line = char_byte.decode("utf-8")
+        continue
 
-        # If 'End of Line' (ETX) reached -> start evaluation
-        if char_byte == ETX:
-          self.log.debug('[RcRead] line: >>%s<<' % (line))
+      # If 'End of Line' (ETX) reached -> start evaluation
+      if char_byte == ETX:
+        self.log.debug('[RcRead] line: >>%s<<' % (line))
 
-          if line[0] == STX.decode("utf-8"):
-            self.log.debug('[RcRead] General Report')
+        if line[0] == STX.decode("utf-8"):
+          self.log.debug('[RcRead] General Report')
 
-            try:
-              m = parmre.match(line)
-              if m is not None:
-                
-                if m.group(4) in self.rc_event_list: 
-                
-                  if m.group(5) in self.rc_event_list[m.group(4)]:
-                    event_data_desc = str(self.rc_event_list[m.group(4)]['_content'] + '.' + self.rc_event_list[m.group(4)][m.group(5)])
-                  else:
-                    event_data_desc = str(self.rc_event_list[m.group(4)]['_content'])
-
-                  if '_object' in self.rc_event_list[m.group(4)]:
-                    self.log.info("[RcRead] Object found for: " + event_data_desc)
-                    if m.group(5) in self.rc_event_list[m.group(4)]: 
-                      self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(self.rc_event_list[m.group(4)][m.group(5)])
-                    else:
-                      self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(m.group(5))
-
-                  else:
-                    self.log.warning("[RcRead] No object found for: " + event_data_desc)
-                  
+          try:
+            m = parmre.match(line)
+            if m is not None:
+              
+              if m.group(4) in self.rc_event_list: 
+              
+                if m.group(5) in self.rc_event_list[m.group(4)]:
+                  event_data_desc = str(self.rc_event_list[m.group(4)]['_content'] + '.' + self.rc_event_list[m.group(4)][m.group(5)])
                 else:
-                  self.log.warning("[RcRead] Unknown event received: '" + str(m.group(4)) + "'.")
-            except NotImplementedError:
-              self.log.warning("[RcRead] Got unknown value '" + str(m.group(5)) + " for event '" + str(m.group(4)) + "'")
-            except Exception as e:
-              self.log.warning("[RcRead] Unhandled exception in loop: " + str(e))
+                  event_data_desc = str(self.rc_event_list[m.group(4)]['_content'])
 
-          elif line[0] == DC1.decode("utf-8"):
-            self.log.debug('[RcRead] Unrecognised Report with DC1')
-          elif line[0] == DC2.decode("utf-8"):
-            self.log.debug('[RcRead] Unrecognised Report with DC2')
-          elif line[0] == DC3.decode("utf-8"):
-            self.log.debug('[RcRead] Unrecognised Report with DC3')
-          elif line[0] == DC4.decode("utf-8"):
-            self.log.debug('[RcRead] Unrecognised Report with DC4')
-          else:
-            self.log.warning('[RcRead] Unrecognised Report')
-          
-          # Finally, reset line
-          line = ""
+                if '_object' in self.rc_event_list[m.group(4)]:
+                  self.log.info("[RcRead] Object found for: " + event_data_desc)
+                  if m.group(5) in self.rc_event_list[m.group(4)]: 
+                    self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(self.rc_event_list[m.group(4)][m.group(5)])
+                  else:
+                    self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(m.group(5))
+
+                else:
+                  self.log.warning("[RcRead] No object found for: " + event_data_desc)
+                
+              else:
+                self.log.warning("[RcRead] Unknown event received: '" + str(m.group(4)) + "'.")
+          except NotImplementedError:
+            self.log.warning("[RcRead] Got unknown value '" + str(m.group(5)) + " for event '" + str(m.group(4)) + "'")
+          except Exception as e:
+            self.log.warning("[RcRead] Unhandled exception in loop: " + str(e))
+
+        elif line[0] == DC1.decode("utf-8"):
+          self.log.debug('[RcRead] Unrecognised Report with DC1')
+        elif line[0] == DC2.decode("utf-8"):
+          self.log.debug('[RcRead] Unrecognised Report with DC2')
+        elif line[0] == DC3.decode("utf-8"):
+          self.log.debug('[RcRead] Unrecognised Report with DC3')
+        elif line[0] == DC4.decode("utf-8"):
+          self.log.debug('[RcRead] Unrecognised Report with DC4')
         else:
-          line += char_byte.decode("utf-8")
-    self.log.info("[RcRead] Exit read-loop.")
+          self.log.warning('[RcRead] Unrecognised Report')
+        
+        # Finally, reset line
+        line = ""
+      else:
+        line += char_byte.decode("utf-8")
 
   @staticmethod
   def hex_to_dec(hexstring):
@@ -919,88 +909,124 @@ class YamahaControl:
   @staticmethod
   def dec_to_hex(decstring):
     return hex(decstring)
+
+
+class SerialClient:
+
+  class RS232Protocol(asyncio.Protocol):
+    def __init__(self) -> None:
+      super().__init__()
+      self.log = logging.getLogger("serial-protocol")
+      self.on_read_cb = None
+      self.on_connection_made_cb = None
     
+    def connection_made(self, transport):
+      self.transport = transport
+      if self.on_connection_made_cb:
+        self.on_connection_made_cb()
 
-class RS232Client:
+    def data_received(self, data):
+      #self.log.debug("READ: " + repr(data))
+      if self.on_read_cb:
+        self.on_read_cb(data)
 
-  def __init__(self, device):
+    def connection_lost(self, exc):
+      self.log.warning("Port closed.")
+
+    def set_callbacks(self, on_read_cb, on_connection_made_cb):
+      self.on_read_cb = on_read_cb
+      self.on_connection_made_cb = on_connection_made_cb
+
+
+  def __init__(self, loop, config, on_read_cb) -> None:
     self.log = logging.getLogger("serial")
-    self.conn = serial.Serial()
-    self.device = device
+    self.loop = loop
+    self.config = config
+    self.on_read_cb = on_read_cb
+
+    self.protocol_transport = None
+    self.protocol = None
+    self.device_is_responing = False
 
   def __del__(self):
     self.terminate()
-  
-  def terminate(self):
-    if self.conn:
-      self.close_connection()
-    self.conn = None
 
-  def open_connection(self):
-    if self.conn.isOpen() is False:
-      self.conn_init = self.init_connection()
-      if self.conn_init and self.conn_init.isOpen():
-        self.conn = self.conn_init
-        return self.conn
-      else:
-        return None
-    else:
-      return self.conn
+  def terminate(self):
+    self.close_connection()
+
+  async def run(self):
+    self.protocol_transport, self.protocol = await serial_asyncio.create_serial_connection(
+      self.loop, 
+      self.RS232Protocol, 
+      self.config.device, 
+      baudrate=9600, 
+      bytesize=8, 
+      parity='N', 
+      stopbits=1, 
+      timeout=1, 
+      xonxoff=0, 
+      rtscts=0
+    )
+    self.protocol.set_callbacks(self.on_read, self.sync_test_connection)
+    return self
 
   def close_connection(self):
-    self.log.info("Closing RS232 connection...")
-    if self.conn.isOpen():
-      self.conn.close()
+    self.log.info("Closing connection...")
+    if self.protocol_transport:
+      self.protocol_transport.close()
 
+  def on_read(self, data):
+    if not self.device_is_responing:
+      if ETX in data:
+        self.device_is_responing = True
+      else:
+        self.log.warning("Did not receive any response. Trying again...")
+    elif self.on_read_cb:
+      self.loop.create_task(self.on_read_cb(data))
 
-  def init_connection(self):
-    self.log.info("Initializing RS232 connection...")
+  async def write(self, data, format=True):
+    if self.protocol_transport:
+      self.log.debug("WRITE: " + str(data))
+      self.protocol_transport.write(self.format_command(data) if format else data)
 
-    ser = serial.Serial(self.device, baudrate=9600, bytesize=8, parity='N', stopbits=1, timeout=1, xonxoff=0, rtscts=0)
-    ser.setDTR(1)
-    ser.setRTS(1)
-    
-    connection_attemps = 0
-    self.device_is_responing = False
-    if ser.isOpen():
-      response = bytes()
-      while not self.device_is_responing:
-        ser.write(b'\x11' + "000".encode() + ETX)
-        response = ser.read(200)
-        if ETX in response:
-          self.device_is_responing = True
-          break
-        else:
-          self.log.warning("Did not receive any response. Trying again...")
-        connection_attemps += 1
-        if connection_attemps > 10:
-          self.log.error("Could not etablish connection. Giving up...")
-          return None
-        time.sleep(1)
-      self.log.info("Connection is open.")
-    else:
-      return None
-    return ser
-
-
-  def read(self, size=0):
-    ser = self.open_connection()
-    #self.log.debug("READ: " + str(size))
-    if size:
-      return ser.read(size)
-    else:
-      return ser.read()
-  
-  def write(self, data):
-    ser = self.open_connection()
-    self.log.debug("WRITE: " + str(data))
-    ser.write(self.format_command(data))
-
-  def format_command(self, command):
+  @staticmethod
+  def format_command(command):
     result = bytes()
     if not(DC1.decode("utf-8") in command or DC2.decode("utf-8") in command or DC3.decode("utf-8") in command or STX.decode("utf-8") in command or ETX.decode("utf-8") in command):
       result += STX
     return (result + command.encode() + ETX)
+
+  def sync_test_connection(self):
+    return self.loop.create_task(self.test_connection())
+
+  async def test_connection(self):
+    self.log.info("Checking RS232 connection...")
+    if not self.protocol_transport:
+      return False
+
+    connection_attemps = 0
+    while not self.device_is_responing:
+      await self.write(b'\x11' + "000".encode() + ETX, format=False)
+      connection_attemps += 1
+      if connection_attemps > 10:
+        self.log.error("Could not etablish connection. Giving up...")
+        raise RuntimeError("Could not etablish connection.")
+      await asyncio.sleep(1)
+    self.log.info("Connection is open.")
+  
+  @staticmethod
+  def iterbytes(b):
+    """Iterate over bytes, returning bytes instead of ints (python3); copied from pyserial source"""
+    if isinstance(b, memoryview):
+      b = b.tobytes()
+    i = 0
+    while True:
+      a = b[i:i + 1]
+      i += 1
+      if a:
+        yield a
+      else:
+        break
 
 
 class MqttClient:
@@ -1019,7 +1045,7 @@ class MqttClient:
       self.log.debug("Socket opened")
 
       def cb():
-        self.log.debug("Socket is readable, calling loop_read")
+        #self.log.debug("Socket is readable, calling loop_read")
         client.loop_read()
 
       self.loop.add_reader(sock, cb)
