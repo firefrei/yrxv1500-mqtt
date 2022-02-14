@@ -5,6 +5,10 @@ mqtt:
   password: ''
   topic_prefix: 'yamaha-rxv1500'
   client_id: 'rxv1500-mqtt'
+  discovery:
+    topic_prefix: 'homeassistant'
+    unique_id: 'yamaha-rxv1500'
+    #via_device_id: ''
 
 serial:
   device: '/dev/ttyUSB0'

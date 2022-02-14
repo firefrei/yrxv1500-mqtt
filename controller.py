@@ -10,6 +10,7 @@ import time
 import re
 import threading
 import socket
+import json
 from signal import signal, SIGINT
 from types import SimpleNamespace
 
@@ -73,6 +74,11 @@ class Config:
     self.mqtt.__dict__.setdefault("qos", 0)
     self.mqtt.__dict__.setdefault("retain", False)
     self.mqtt.__dict__.setdefault("keepalive", 60)
+
+    self.mqtt.discovery = SimpleNamespace(**self.mqtt.discovery if hasattr(self.mqtt, "discovery") else {})
+    self.mqtt.discovery.__dict__.setdefault("unique_id", "yamaha-rxv1500-1")
+    self.mqtt.discovery.__dict__.setdefault("via_device_id", "")
+    self.mqtt.discovery.__dict__.setdefault("topic_prefix", "homeassistant")
   
   def _parse_serial(self, config):
     self.serial = SimpleNamespace(**config["serial"] if "serial" in config else {})
@@ -88,9 +94,54 @@ class YamahaControl:
   This is the main class of the Controller. __init__() will initialize all components.
   """
 
+  class RemoteEventDiscovery:
+    def __init__(self, controller, subscription, discovery_callback, state_only=False) -> None:
+      self.controller = controller
+      self.subscription = subscription
+      self.discovery_callback = discovery_callback
+      self.state_only = state_only
+
+      # functions alias
+      self.publish_state = self.controller.mqtt.publish_state
+
+    def announce(self):
+      # Send discovery message
+      device_class, payload = self.discovery_callback()
+      if not payload:
+        return
+
+      payload.update({
+        "~": self.subscription.topic_state,
+        "stat_t": "~",
+      })
+      if not self.state_only:
+        payload.update({
+          "cmd_t": "~/set",
+        })
+
+      if device_class == "switch":
+        payload.update({
+          "pl_on": "on",
+          "pl_off": "off"
+        })
+
+      # Create and publish message
+      topic = "%s/%s/%s/%s/config" % (
+        CONFIG.mqtt.discovery.topic_prefix, 
+        device_class, 
+        CONFIG.mqtt.discovery.unique_id, 
+        self.subscription.topic_extension
+      )
+      self.publish_state(topic, json.dumps(payload), retain=True)
+
+    def revert(self):
+      raise NotImplementedError
+
+
   class RemoteEventSubscription:
     def __init__(self, controller, topic_extension, on_event_callback, state_only=False):
       self.controller = controller
+      self.topic_extension = topic_extension
       self.topic_state = str("%s/%s/%s" % (CONFIG.mqtt.topic_prefix, CONFIG.mqtt.client_id, topic_extension))
       self.on_event_callback = on_event_callback
       self.state_only = state_only
@@ -135,6 +186,9 @@ class YamahaControl:
       self.subscription = YamahaControl.RemoteEventSubscription(self.controller, topic_extension, self.on_mqtt_cmd_for_rc, state_only)
       self.controller.remote_subscriptions.add(self.subscription)
 
+      self.discovery = YamahaControl.RemoteEventDiscovery(self.controller, self.subscription, self.mqtt_discovery_config, state_only)
+      self.discovery.announce()
+
     def __str__(self):
       return str("Entity: %s" % self.name)
 
@@ -164,6 +218,24 @@ class YamahaControl:
       self.controller.log.info("[MqttMessage] Processing command >>" + str(message.topic) + "<< with data >>" + str(state_new) + "<<")
       self.write_rc(state_new)
 
+    def mqtt_discovery_config(self, device_class=None, icon=None):
+      if device_class is None:
+        return None, None
+
+      payload = {
+        "unique_id": "%s__%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
+        "object_id": "%s__%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
+        "name": str(self),
+        "device": {
+          "identifiers": str(CONFIG.mqtt.discovery.unique_id),
+          "manufacturer": "Yamaha",
+          "model": "RX-V1500",
+          "name": "Yamaha RX-V1500 A/V Receiver"
+        }
+      }
+      if icon:
+        payload["icon"] = icon
+      return device_class, payload
 
   class GenericSensorEntity(EntityBase):
     name = ""
@@ -202,6 +274,9 @@ class YamahaControl:
       else:
         raise NotImplementedError
 
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch", icon="mdi:power")
+
     def __str__(self):
       return str("Power")
   
@@ -211,6 +286,9 @@ class YamahaControl:
       'On': ('on', "%s%s%s%s" % (DC3.decode("utf-8"), DEL.decode("utf-8"), DEL.decode("utf-8"), DEL.decode("utf-8"))),  # Reset all RS232 controlled settings # (DC3, DEL, DEL, DEL, ETX)
       'Off': ('off', None)
     }
+    
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch")
 
     def __str__(self):
       return str("Reset")
@@ -221,8 +299,12 @@ class YamahaControl:
       'On': ('on', '07e7e'),  # Power On
       'Off': ('off', '07e7f') # Power Off
     }
+
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch", icon="mdi:power")
+
     def __str__(self):
-      return str("PowerZone1")
+      return str("Power Zone 1")
 
 
   class PowerZone2Entity(EntityBase):
@@ -231,8 +313,12 @@ class YamahaControl:
       'On': ('on', '07eba'),  # Power On
       'Off': ('off', '07ebb') # Power Off
     }
+
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch", icon="mdi:power")
+
     def __str__(self):
-      return str("PowerZone2")
+      return str("Power Zone 2")
 
 
   class SpeakersAEntity(EntityBase):
@@ -241,8 +327,12 @@ class YamahaControl:
       'On': ('on', '07eab'),  # Power On
       'Off': ('off', '07eac') # Power Off
     }
+
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch", icon="mdi:speaker")
+
     def __str__(self):
-      return str("SpeakersA")
+      return str("Speakers A")
 
   
   class SpeakersBEntity(EntityBase):
@@ -251,8 +341,12 @@ class YamahaControl:
       'On': ('on', '07ead'),  # Power On
       'Off': ('off', '07eae') # Power Off
     }
+
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch", icon="mdi:speaker")
+
     def __str__(self):
-      return str("SpeakersB")
+      return str("Speakers B")
 
 
   class InputSourceEntity(EntityBase):
@@ -270,8 +364,14 @@ class YamahaControl:
       'VCR2': ('dvr-vcr2', '07a13'),
       'VAux': ('vaux', '07a55')
     }
+
+    def mqtt_discovery_config(self):
+      dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:import")
+      pl["options"] = [ x[0] for x in self.options.values() ]
+      return dev_cl, pl
+
     def __str__(self):
-      return str("InputSource")
+      return str("Input Source")
 
   
   class InputModeEntity(EntityBase):
@@ -280,10 +380,16 @@ class YamahaControl:
       'Auto': ('auto', '07ea6'),
       'DTS': ('dts', '07ea8'),
       'Analog': ('analog', '07eaa'),
-      'AnalogOnly': ('analog', '')
+      #'AnalogOnly': ('analog', '')
     }
+
+    def mqtt_discovery_config(self):
+      dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:surround-sound-5-1")
+      pl["options"] = [ x[0] for x in self.options.values() ]
+      return dev_cl, pl
+
     def __str__(self):
-      return str("InputMode")
+      return str("Input Mode")
 
 
   class TunerPresetEntity(EntityBase):
@@ -298,8 +404,14 @@ class YamahaControl:
       '7': ('7', '07aeb'),
       '8': ('8', '07aec'),
     }
+
+    def mqtt_discovery_config(self):
+      dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:radio")
+      pl["options"] = [ x[0] for x in self.options.values() ]
+      return dev_cl, pl
+
     def __str__(self):
-      return str("TunerPreset")
+      return str("Tuner Preset")
 
     def write_rc(self, state):
       # Format in HA: '2.0' (string) -> only use '2'
@@ -313,6 +425,12 @@ class YamahaControl:
       'Short': ('short', '07eb1'),
       'Full': ('full', '07eb2'),
     }
+
+    def mqtt_discovery_config(self):
+      dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:fullscreen")
+      pl["options"] = [ x[0] for x in self.options.values() ]
+      return dev_cl, pl
+
     def __str__(self):
       return str("OSD")
   
@@ -345,6 +463,12 @@ class YamahaControl:
       'direct stereo': ('direct stereo', '07ec1'),
       '7ch stereo': ('7ch stereo', '07eff')
     }
+
+    def mqtt_discovery_config(self):
+      dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:map-marker")
+      pl["options"] = [ x[0] for x in self.options.values() ]
+      return dev_cl, pl
+
     def __str__(self):
       return str("DSP")
 
@@ -380,8 +504,12 @@ class YamahaControl:
       'On': ('on', '07ea2'),  # Mute
       'Off': ('off', '07ea3') # Unmute
     }
+
     def __str__(self):
       return str("Mute")
+    
+    def mqtt_discovery_config(self):
+      return super().mqtt_discovery_config("switch", icon="mdi:volume-mute")
 
 
   def __init__(self):
