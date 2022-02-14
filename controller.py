@@ -4,6 +4,7 @@
 # Control a Yamaha RX-V1500 receiver connected via RS232 using MQTT
 #
 
+import asyncio
 import logging
 import logging.config
 import time
@@ -155,16 +156,16 @@ class YamahaControl:
       # Subscribe for command topic
       if not self.state_only:
         self.topic_command = str("%s/%s" % (self.topic_state, "set"))
-        self.controller.mqtt.handle.subscribe(self.topic_command, qos=1)
-        self.controller.mqtt.handle.message_callback_add(self.topic_command, self.on_event_callback)
+        self.controller.mqtt.client.subscribe(self.topic_command, qos=1)
+        self.controller.mqtt.client.message_callback_add(self.topic_command, self.on_event_callback)
         self.controller.log.info("Registered listener for topic: %s" % str(self.topic_command))
       else:
         self.topic_command = None
 
     def unsubscribe(self):
       if self.controller.mqtt and self.topic_command:
-        self.controller.mqtt.handle.message_callback_remove(self.topic_command)
-        self.controller.mqtt.handle.unsubscribe(self.topic_command)
+        self.controller.mqtt.client.message_callback_remove(self.topic_command)
+        self.controller.mqtt.client.unsubscribe(self.topic_command)
         self.controller.log.info("Removed listener for topic: %s" % str(self.topic_command))
 
     def __str__(self):
@@ -520,7 +521,10 @@ class YamahaControl:
     # Setup logging
     self.log = logging.getLogger("controller")
     self.log.info("Starting YamahaControl...")
-    
+
+    # Create asyncio event loop
+    self.loop = asyncio.get_event_loop()
+
     # Setup physical device access via serial connection
     self.rs232 = RS232Client(CONFIG.serial.device)
 
@@ -528,7 +532,7 @@ class YamahaControl:
     # Callback: Generate rc event list which registers MQTT subscriptions
     self.remote_subscriptions = set()
     self.rc_event_list = None
-    self.mqtt = MqttClient(self._setup_rc_event_list, self._clear_remote_subscriptions)
+    self.mqtt = self.loop.run_until_complete(MqttClient(self.loop, self._setup_rc_event_list, self._clear_remote_subscriptions).run())
     
     # start thread
     self.serialReaderEnabled = True
@@ -539,10 +543,16 @@ class YamahaControl:
     """
     Destructor of Controller
     """
-    self._clear_remote_subscriptions()
     self.terminate()
-  
+
   def terminate(self):
+    if self.loop and self.loop.is_running():
+      logging.debug("Terminating event loop...")
+      self.loop.stop()
+  
+  async def async_terminate(self):
+    await self._clear_remote_subscriptions()
+    
     if self.mqtt:
       self.log.info("Terminating MQTT connection...")
       self.mqtt.terminate()
@@ -555,8 +565,15 @@ class YamahaControl:
 
       self.rs232.terminate()
     self.rs232 = None
+    
+  def run(self):
+    logging.debug("Starting event loop...")
+    self.loop.run_forever()
+    self.loop.run_until_complete(self.async_terminate())
+    self.loop.close()
+    logging.debug("Closed event loop.")
 
-  def _setup_rc_event_list(self):
+  async def _setup_rc_event_list(self):
     # Define possible events/messages from RX-V1500 and initialize Entity Objects
     self.rc_event_list = {
       '00':{
@@ -813,13 +830,13 @@ class YamahaControl:
     }
   
     # Finally, create subscriptions at remote broker
-    self._create_remote_subscriptions()
+    await self._create_remote_subscriptions()
 
-  def _create_remote_subscriptions(self):
+  async def _create_remote_subscriptions(self):
     for sub in self.remote_subscriptions:
       sub.subscribe()
 
-  def _clear_remote_subscriptions(self):
+  async def _clear_remote_subscriptions(self):
     for sub in self.remote_subscriptions:
       sub.unsubscribe()
     self.remote_subscriptions = set()
@@ -988,46 +1005,97 @@ class RS232Client:
 
 class MqttClient:
 
-  def __init__(self, on_connect_callback, on_disconnect_callback):
+  class AsyncioHelper:
+    def __init__(self, loop, client):
+      self.log = logging.getLogger("mqtt-asyncio-helper")
+      self.loop = loop
+      self.client = client
+      self.client.on_socket_open = self.on_socket_open
+      self.client.on_socket_close = self.on_socket_close
+      self.client.on_socket_register_write = self.on_socket_register_write
+      self.client.on_socket_unregister_write = self.on_socket_unregister_write
+
+    def on_socket_open(self, client, userdata, sock):
+      self.log.debug("Socket opened")
+
+      def cb():
+        self.log.debug("Socket is readable, calling loop_read")
+        client.loop_read()
+
+      self.loop.add_reader(sock, cb)
+      self.misc = self.loop.create_task(self.misc_loop())
+
+    def on_socket_close(self, client, userdata, sock):
+      self.log.debug("Socket closed")
+      self.loop.remove_reader(sock)
+      self.misc.cancel()
+
+    def on_socket_register_write(self, client, userdata, sock):
+      self.log.debug("Watching socket for writability.")
+
+      def cb():
+        self.log.debug("Socket is writable, calling loop_write")
+        client.loop_write()
+
+      self.loop.add_writer(sock, cb)
+
+    def on_socket_unregister_write(self, client, userdata, sock):
+      self.log.debug("Stop watching socket for writability.")
+      self.loop.remove_writer(sock)
+
+    async def misc_loop(self):
+      self.log.debug("misc_loop started")
+      while self.client.loop_misc() == mqtt_client.MQTT_ERR_SUCCESS:
+        try:
+          await asyncio.sleep(1)
+        except asyncio.CancelledError:
+          break
+      self.log.debug("misc_loop finished")
+
+
+  def __init__(self, loop, on_connect_callback, on_disconnect_callback):
     self.log = logging.getLogger("mqtt")
 
+    self.loop = loop
     self.on_connect_callback = on_connect_callback
     self.on_disconnect_callback = on_disconnect_callback
-    self.handle = self.connect_mqtt()
 
   def __del__(self):
     self.terminate()
   
   def terminate(self):
-    if self.handle:
-      self.handle.disconnect()
-      self.handle = None
+    if self.client:
+      self.client.disconnect()
+      self.client = None
 
-  def connect_mqtt(self):
+  async def run(self):
     # Set Connecting Client ID
-    client = mqtt_client.Client(CONFIG.mqtt.client_id)
-    client.username_pw_set(CONFIG.mqtt.username, CONFIG.mqtt.password)
-    client.reconnect_delay_set(min_delay=1, max_delay=120)
-    client.on_connect = self.on_connect
-    client.on_disconnect = self.on_disconnect
+    self.client = mqtt_client.Client(CONFIG.mqtt.client_id)
+    self.client.username_pw_set(CONFIG.mqtt.username, CONFIG.mqtt.password)
+    self.client.reconnect_delay_set(min_delay=1, max_delay=120)
+    self.client.on_connect = self.on_connect
+    self.client.on_disconnect = self.on_disconnect
+
+    self._aioh = self.AsyncioHelper(self.loop, self.client)
 
     # Try to connect to mqtt broker
     while True:
       try:
-        client.connect(CONFIG.mqtt.host, port=CONFIG.mqtt.port, keepalive=CONFIG.mqtt.keepalive)
+        self.client.connect(CONFIG.mqtt.host, port=CONFIG.mqtt.port, keepalive=CONFIG.mqtt.keepalive)
+        self.client.socket().setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
         break
       except socket.gaierror as err:
         self.log.warning("Could not resolve or reach MQTT broker. Going to try again... (Reason: %s)" % str(err))
         time.sleep(1)
       except BaseException:
         raise
+    
+    return self
  
-    return client
-
   def on_connect(self, client, userdata, flags, rc):
     if rc == 0:
         self.log.info("Connected to MQTT broker >>%s<<" % (CONFIG.mqtt.host))
-        self.on_connect_callback()
+        self.loop.create_task(self.on_connect_callback())
     else:
         self.log.error("Failed to connect, return code >>%d<<", rc)
 
@@ -1036,11 +1104,11 @@ class MqttClient:
         self.log.info("Disconnected from MQTT broker")
     else:
         self.log.warning("Unexpected disconnetion from MQTT broker, return code >>%d<<", rc)
-    self.on_disconnect_callback()
+    self.loop.create_task(self.on_disconnect_callback())
 
   def publish_state(self, topic_state, state_new, qos=0, retain=False):
     self.log.info('Publishing state change of >>' + str(topic_state) + '<< to >>' + str(state_new) + '<<.')
-    self.handle.publish(topic_state, payload=state_new, qos=qos, retain=retain)
+    self.client.publish(topic_state, payload=state_new, qos=qos, retain=retain)
 
 
 
@@ -1057,9 +1125,9 @@ if __name__ == '__main__':
   logging.basicConfig()
   CONFIG = Config()
   CONTROLLER = YamahaControl()
-  
+
   # Run the sigint_handler() function when SIGINT singal is recieved
   signal(SIGINT, sigint_handler)
-  
-  # Start blocking mqtt loop
-  CONTROLLER.mqtt.handle.loop_forever(retry_first_connection=True)
+
+  # Start blocking loop
+  CONTROLLER.run()
