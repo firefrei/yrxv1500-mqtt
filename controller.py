@@ -306,16 +306,17 @@ class YamahaControl:
             if state == 'on':
                 self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(
                     self.subscription.topic_state) + ') to "' + str(state) + '".')
-                await self.controller.rs232.write(DC1.decode("utf-8") + "000")
-                await self.controller.rs232.write("20000")
-                await self.controller.rs232.write("20100")
-                await self.controller.rs232.write(self.options['On'][1])
-                return
+                commands = [
+                    DC1.decode("utf-8") + "000",
+                    "20000",
+                    "20100",
+                    self.options['On'][1]
+                ]
+                await self.controller.rs232.write(commands)
             elif state == 'off':
                 self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(
                     self.subscription.topic_state) + ') to "' + str(state) + '".')
                 await self.controller.rs232.write(self.options['Off'][1])
-                return
             else:
                 raise NotImplementedError
 
@@ -1064,8 +1065,13 @@ class SerialClient:
     async def write(self, data, format=True):
         if self.protocol_transport:
             self.log.debug("WRITE: " + str(data))
-            self.protocol_transport.write(
-                self.format_command(data) if format else data)
+            if isinstance(data, list):
+                for item in data:
+                    self.protocol_transport.write(
+                        self.format_command(item) if format else item)
+            else:
+                self.protocol_transport.write(
+                    self.format_command(data) if format else data)
 
     @staticmethod
     def format_command(command):
