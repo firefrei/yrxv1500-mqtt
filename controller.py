@@ -198,7 +198,8 @@ class YamahaControl:
         }
 
         def __init__(self, controller, topic_extension, state_only=False):
-            self.name = topic_extension
+            if not hasattr(self, "name") or not self.name:
+                self.name = topic_extension
             self.controller = controller
 
             self.subscription = YamahaControl.RemoteEventSubscription(
@@ -208,7 +209,7 @@ class YamahaControl:
             # Init discovery messages and start periodic sending
             self.discovery = YamahaControl.RemoteEventDiscovery(
                 self.controller, self.subscription, self.mqtt_discovery_config, state_only)
-            self.loop.call_soon(self.discovery.announce_periodically)
+            self.controller.loop.create_task(self.discovery.announce_periodically())
 
         def __str__(self):
             return str("Entity: %s" % self.name)
@@ -249,8 +250,8 @@ class YamahaControl:
                 return None, None
 
             payload = {
-                "unique_id": "%s__%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
-                "object_id": "%s__%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
+                "unique_id": "%s_%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
+                "object_id": "%s_%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
                 "name": str(self),
                 "device": {
                     "identifiers": str(CONFIG.mqtt.discovery.unique_id),
@@ -264,10 +265,9 @@ class YamahaControl:
             return device_class, payload
 
     class GenericSensorEntity(EntityBase):
-        name = ""
-
-        def __init__(self, controller, topic_extension, entity_name):
+        def __init__(self, controller, topic_extension, entity_name, icon=None):
             self.name = entity_name
+            self.icon = icon
             super().__init__(controller, topic_extension, state_only=True)
 
         def __str__(self):
@@ -280,6 +280,20 @@ class YamahaControl:
         async def write_rc(self, state):
             self.controller.log.info(
                 "ERROR! Write on GenericSensor is not allowed! Tried: %s" % (state))
+        
+        def mqtt_discovery_config(self, device_class=None, icon=None):
+            i = icon if icon else self.icon
+            dc = device_class if device_class else "sensor"
+            return super().mqtt_discovery_config(dc, icon=i)
+    
+    class GenericBinarySensorEntity(GenericSensorEntity):
+        def mqtt_discovery_config(self):
+            dev_cl, pl = super().mqtt_discovery_config("binary_sensor", icon=self.icon)
+            pl.update({
+                "payload_on": "On",
+                "payload_off": "Off"
+            })
+            return dev_cl, pl
 
     class PowerEntity(EntityBase):
         options = {
@@ -433,7 +447,7 @@ class YamahaControl:
         }
 
         def mqtt_discovery_config(self):
-            dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:radio")
+            dev_cl, pl = super().mqtt_discovery_config("select", icon="mdi:tune")
             pl["options"] = [x[0] for x in self.options.values()]
             return dev_cl, pl
 
@@ -499,32 +513,59 @@ class YamahaControl:
             return str("DSP")
 
     class MasterVolumeEntity(EntityBase):
-        def __str__(self):
-            return str("MasterVolume")
+        VOL_MIN = -80.0
+        VOL_STEP = 0.5
 
-        def on_rc_state_update(self, vol_str):
+        def __str__(self):
+            return str("Master Volume")
+        
+        def limit(self, volume, log=True):
+            if not isinstance(volume, float):
+                volume = float(volume)
+            if CONFIG.limits.volume is not None and volume > CONFIG.limits.volume:
+                volume = float(CONFIG.limits.volume)
+                if log:
+                    self.controller.log.info(
+                        "[V] Volume limit reached. Changed value to: %d" % (volume))
+            return volume
+        
+        def percentage(self, volume):
+            # scale from [-80,0] to [0,1]
+            return float((1 - 0) * (volume - (self.VOL_MIN)) / (0 - (self.VOL_MIN)) + 0)
+
+        def on_rc_state_update(self, vol_hex):
             # Process volume from hex string to -dB
-            step = 0.5
-            new_db_val = (YamahaControl.hex_to_dec(vol_str) * step) - 99.5
+            new_db_val = (YamahaControl.hex_to_dec(vol_hex) * self.VOL_STEP) - 99.5
 
             # Update state
             self.subscription.publish_state(
                 self.subscription.topic_state, new_db_val, retain=True)
+            self.subscription.publish_state(
+                self.subscription.topic_state + "/details", 
+                json.dumps({
+                    "volume_percentage": self.percentage(new_db_val)
+                }),
+                retain=True
+            )
 
         async def write_rc(self, vol_new):
-            if CONFIG.limits.volume is not None and float(vol_new) > CONFIG.limits.volume:
-                vol_new = float(CONFIG.limits.volume)
-                self.controller.log.info(
-                    "[V] Volume limit reached. Changed value to: %d" % (vol_new))
-
             # Process volume from -dB string to hex
-            step = 0.5
-            new_normed = int((float(vol_new) + 99.5) / step)
+            new_normed = int((self.limit(vol_new) + 99.5) / self.VOL_STEP)
             raw_db_val = str(
                 str(YamahaControl.dec_to_hex(new_normed))[2:]).upper()
             self.controller.log.debug(
                 "[V] Volume to set: %s" % str(raw_db_val))
             await self.controller.rs232.write("230" + str(raw_db_val))
+        
+        def mqtt_discovery_config(self):
+            dev_cl, pl = super().mqtt_discovery_config("number", icon="mdi:volume-high")
+            pl.update({
+                "min": self.VOL_MIN,
+                "max": float(CONFIG.limits.volume),
+                "step": self.VOL_STEP,
+                "json_attributes_topic": "~/details"
+            })
+            return dev_cl, pl
 
     class MuteEntity(EntityBase):
         options = {
@@ -611,7 +652,7 @@ class YamahaControl:
             },
             '10': {
                 '_content': 'Format',
-                '_object': YamahaControl.GenericSensorEntity(self, 'playback-format', 'PlaybackFormat'),
+                '_object': YamahaControl.GenericSensorEntity(self, 'playback-format', 'Playback Format'),
                 '00': 'ExternalDecoder',
                 '01': 'Analog',
                 '02': 'PCM',
@@ -625,7 +666,7 @@ class YamahaControl:
             },
             '11': {
                 '_content': 'Fs',
-                '_object': YamahaControl.GenericSensorEntity(self, 'playback-bitrate', 'PlaybackBitrate'),
+                '_object': YamahaControl.GenericSensorEntity(self, 'playback-bitrate', 'Playback Bitrate'),
                 '00': 'Analog',
                 '01': '32kHz',
                 '02': '441kHz',
@@ -834,7 +875,7 @@ class YamahaControl:
             },
             '34': {
                 '_content': 'Headphone',
-                '_object': YamahaControl.GenericSensorEntity(self, 'headphone', 'Headphone'),
+                '_object': YamahaControl.GenericBinarySensorEntity(self, 'headphone', 'Headphone', icon='mdi:headphone'),
                 '00': 'Off',
                 '01': 'On'
             },
