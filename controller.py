@@ -209,7 +209,7 @@ class YamahaControl:
             # Init discovery messages and start periodic sending
             self.discovery = YamahaControl.RemoteEventDiscovery(
                 self.controller, self.subscription, self.mqtt_discovery_config, state_only)
-            self.controller.loop.create_task(self.discovery.announce_periodically())
+            self.controller.discovery_tasks.add(asyncio.Task(self.discovery.announce_periodically()))
 
         def __str__(self):
             return str("Entity: %s" % self.name)
@@ -600,6 +600,7 @@ class YamahaControl:
         # Setup MQTT client
         # Callback: Generate rc event list which registers MQTT subscriptions
         self.remote_subscriptions = set()
+        self.discovery_tasks = set()
         self.rc_event_list = None
         self.mqtt = self.loop.run_until_complete(MqttClient(
             self.loop, self._setup_rc_event_list, self._clear_remote_subscriptions).run())
@@ -616,6 +617,7 @@ class YamahaControl:
             self.loop.stop()
 
     async def async_terminate(self):
+        await self._clear_discovery_tasks()
         await self._clear_remote_subscriptions()
 
         if self.mqtt:
@@ -902,8 +904,13 @@ class YamahaControl:
         for sub in self.remote_subscriptions:
             await sub.unsubscribe()
         self.remote_subscriptions = set()
+    
+    async def _clear_discovery_tasks(self):
+        for task in self.discovery_tasks:
+            task.cancel()
+        self.discovery_tasks = set()
 
-    # Serial port reader
+    # Serial data parser
     # Good code example: https://github.com/memphi2/homie-yamaha-rs232/blob/master/src/main.cpp
     async def process_serial_data(self, data):
         line = ""
