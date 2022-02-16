@@ -162,7 +162,7 @@ class YamahaControl:
             # functions alias
             self.publish_state = self.controller.mqtt.publish_state
 
-        def subscribe(self):
+        async def subscribe(self):
             self.controller.log.info(
                 "Publishing states for topic: %s" % str(self.topic_state))
 
@@ -178,7 +178,7 @@ class YamahaControl:
             else:
                 self.topic_command = None
 
-        def unsubscribe(self):
+        async def unsubscribe(self):
             if self.controller.mqtt and self.topic_command:
                 self.controller.mqtt.client.message_callback_remove(
                     self.topic_command)
@@ -854,11 +854,11 @@ class YamahaControl:
 
     async def _create_remote_subscriptions(self):
         for sub in self.remote_subscriptions:
-            sub.subscribe()
+            await sub.subscribe()
 
     async def _clear_remote_subscriptions(self):
         for sub in self.remote_subscriptions:
-            sub.unsubscribe()
+            await sub.unsubscribe()
         self.remote_subscriptions = set()
 
     # Serial port reader
