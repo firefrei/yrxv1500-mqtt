@@ -112,7 +112,12 @@ class YamahaControl:
             # functions alias
             self.publish_state = self.controller.mqtt.publish_state
 
-        def announce(self):
+        async def announce_periodically(self, period=5*60):
+            while True:
+                await self.announce()
+                await asyncio.sleep(period)
+
+        async def announce(self):
             # Send discovery message
             device_class, payload = self.discovery_callback()
             if not payload:
@@ -142,7 +147,7 @@ class YamahaControl:
             )
             self.publish_state(topic, json.dumps(payload), retain=True)
 
-        def revert(self):
+        async def revert(self):
             raise NotImplementedError
 
     class RemoteEventSubscription:
@@ -200,9 +205,10 @@ class YamahaControl:
                 self.controller, topic_extension, self.on_mqtt_cmd_for_rc, state_only)
             self.controller.remote_subscriptions.add(self.subscription)
 
+            # Init discovery messages and start periodic sending
             self.discovery = YamahaControl.RemoteEventDiscovery(
                 self.controller, self.subscription, self.mqtt_discovery_config, state_only)
-            self.discovery.announce()
+            self.loop.call_soon(self.discovery.announce_periodically)
 
         def __str__(self):
             return str("Entity: %s" % self.name)
