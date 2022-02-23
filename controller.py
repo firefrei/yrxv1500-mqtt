@@ -103,8 +103,9 @@ class YamahaControl:
     """
 
     class RemoteEventDiscovery:
-        def __init__(self, controller, subscription, discovery_callback, state_only=False) -> None:
+        def __init__(self, controller, config, subscription, discovery_callback, state_only=False) -> None:
             self.controller = controller
+            self.config = config
             self.subscription = subscription
             self.discovery_callback = discovery_callback
             self.state_only = state_only
@@ -140,9 +141,9 @@ class YamahaControl:
 
             # Create and publish message
             topic = "%s/%s/%s/%s/config" % (
-                CONFIG.mqtt.discovery.topic_prefix,
+                self.config.topic_prefix,
                 device_class,
-                CONFIG.mqtt.discovery.unique_id,
+                self.config.unique_id,
                 self.subscription.topic_extension
             )
             self.publish_state(topic, json.dumps(payload), retain=True)
@@ -151,11 +152,12 @@ class YamahaControl:
             raise NotImplementedError
 
     class RemoteEventSubscription:
-        def __init__(self, controller, topic_extension, on_event_callback, state_only=False):
+        def __init__(self, controller, config, topic_extension, on_event_callback, state_only=False):
             self.controller = controller
+            self.config = config
             self.topic_extension = topic_extension
             self.topic_state = str(
-                "%s/%s/%s" % (CONFIG.mqtt.topic_prefix, CONFIG.mqtt.client_id, topic_extension))
+                "%s/%s/%s" % (self.config.topic_prefix, self.config.client_id, topic_extension))
             self.on_event_callback = on_event_callback
             self.state_only = state_only
 
@@ -203,12 +205,12 @@ class YamahaControl:
             self.controller = controller
 
             self.subscription = YamahaControl.RemoteEventSubscription(
-                self.controller, topic_extension, self.on_mqtt_cmd_for_rc, state_only)
+                self.controller, self.controller.config.mqtt, topic_extension, self.on_mqtt_cmd_for_rc, state_only)
             self.controller.remote_subscriptions.add(self.subscription)
 
             # Init discovery messages and start periodic sending
             self.discovery = YamahaControl.RemoteEventDiscovery(
-                self.controller, self.subscription, self.mqtt_discovery_config, state_only)
+                self.controller, self.controller.config.mqtt.discovery, self.subscription, self.mqtt_discovery_config, state_only)
             self.controller.discovery_tasks.add(asyncio.Task(self.discovery.announce_periodically()))
 
         def __str__(self):
@@ -249,11 +251,11 @@ class YamahaControl:
                 return None, None
 
             payload = {
-                "unique_id": "%s_%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
-                "object_id": "%s_%s" % (CONFIG.mqtt.discovery.unique_id, self.name),
+                "unique_id": "%s_%s" % (self.controller.config.mqtt.discovery.unique_id, self.name),
+                "object_id": "%s_%s" % (self.controller.config.mqtt.discovery.unique_id, self.name),
                 "name": str(self),
                 "device": {
-                    "identifiers": str(CONFIG.mqtt.discovery.unique_id),
+                    "identifiers": str(self.controller.config.mqtt.discovery.unique_id),
                     "manufacturer": "Yamaha",
                     "model": "RX-V1500",
                     "name": "Yamaha RX-V1500 A/V Receiver"
@@ -522,8 +524,8 @@ class YamahaControl:
         def limit(self, volume, log=True):
             if not isinstance(volume, float):
                 volume = float(volume)
-            if CONFIG.limits.volume is not None and volume > CONFIG.limits.volume:
-                volume = float(CONFIG.limits.volume)
+            if self.controller.config.limits.volume is not None and volume > self.controller.config.limits.volume:
+                volume = float(self.controller.config.limits.volume)
                 if log:
                     self.controller.log.info(
                         "[V] Volume limit reached. Changed value to: %d" % (volume))
@@ -561,7 +563,7 @@ class YamahaControl:
             dev_cl, pl = super().mqtt_discovery_config("number", icon="mdi:volume-high")
             pl.update({
                 "min": self.VOL_MIN,
-                "max": float(CONFIG.limits.volume),
+                "max": float(self.controller.config.limits.volume),
                 "step": self.VOL_STEP,
                 "json_attributes_topic": "~/details"
             })
@@ -580,10 +582,11 @@ class YamahaControl:
         def mqtt_discovery_config(self):
             return super().mqtt_discovery_config("switch", icon="mdi:volume-mute")
 
-    def __init__(self):
+    def __init__(self, config):
         """
         ENTRYPOINT / INIT of YamahaControl / Controller
         """
+        self.config = config
 
         # Setup logging
         self.log = logging.getLogger("controller")
@@ -594,7 +597,7 @@ class YamahaControl:
 
         # Setup physical device access via serial connection
         self.rs232 = self.loop.run_until_complete(SerialClient(
-            self.loop, CONFIG.serial, self.process_serial_data).run())
+            self.loop, self.config.serial, self.process_serial_data).run())
 
         # Setup MQTT client
         # Callback: Generate rc event list which registers MQTT subscriptions
@@ -602,7 +605,7 @@ class YamahaControl:
         self.discovery_tasks = set()
         self.rc_event_list = None
         self.mqtt = self.loop.run_until_complete(MqttClient(
-            self.loop, self._setup_rc_event_list, self._clear_remote_subscriptions).run())
+            self.loop, self.config.mqtt, self._setup_rc_event_list, self._clear_remote_subscriptions).run())
 
     def __del__(self):
         """
@@ -1168,10 +1171,11 @@ class MqttClient:
                     break
             self.log.debug("misc_loop finished")
 
-    def __init__(self, loop, on_connect_callback, on_disconnect_callback):
+    def __init__(self, loop, config, on_connect_callback, on_disconnect_callback):
         self.log = logging.getLogger("mqtt")
 
         self.loop = loop
+        self.config = config
         self.on_connect_callback = on_connect_callback
         self.on_disconnect_callback = on_disconnect_callback
 
@@ -1185,8 +1189,8 @@ class MqttClient:
 
     async def run(self):
         # Set Connecting Client ID
-        self.client = mqtt_client.Client(CONFIG.mqtt.client_id)
-        self.client.username_pw_set(CONFIG.mqtt.username, CONFIG.mqtt.password)
+        self.client = mqtt_client.Client(self.config.client_id)
+        self.client.username_pw_set(self.config.username, self.config.password)
         self.client.reconnect_delay_set(min_delay=1, max_delay=120)
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
@@ -1197,7 +1201,7 @@ class MqttClient:
         while True:
             try:
                 self.client.connect(
-                    CONFIG.mqtt.host, port=CONFIG.mqtt.port, keepalive=CONFIG.mqtt.keepalive)
+                    self.config.host, port=self.config.port, keepalive=self.config.keepalive)
                 self.client.socket().setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
                 break
             except socket.gaierror as err:
@@ -1212,7 +1216,7 @@ class MqttClient:
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self.log.info("Connected to MQTT broker >>%s<<" %
-                          (CONFIG.mqtt.host))
+                          (self.config.host))
             self.loop.create_task(self.on_connect_callback())
         else:
             self.log.error("Failed to connect, return code >>%d<<", rc)
@@ -1245,8 +1249,8 @@ def sigint_handler(signal_received, frame):
 
 if __name__ == '__main__':
     logging.basicConfig()
-    CONFIG = Config()
-    CONTROLLER = YamahaControl()
+    config = Config()
+    CONTROLLER = YamahaControl(config)
 
     # Run the sigint_handler() function when SIGINT singal is recieved
     signal(SIGINT, sigint_handler)
