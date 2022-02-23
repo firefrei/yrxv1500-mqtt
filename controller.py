@@ -111,7 +111,7 @@ class YamahaControl:
             self.state_only = state_only
 
             # functions alias
-            self.publish_state = self.controller.mqtt.publish_state
+            self.publish = self.controller.mqtt.publish
 
         async def announce_periodically(self, period=5*60):
             while True:
@@ -146,7 +146,7 @@ class YamahaControl:
                 self.config.unique_id,
                 self.subscription.topic_extension
             )
-            self.publish_state(topic, json.dumps(payload), retain=True)
+            await self.publish(topic, json.dumps(payload), retain=True)
 
         async def revert(self):
             raise NotImplementedError
@@ -224,7 +224,7 @@ class YamahaControl:
                     str(self.options[state][0]), self.subscription.topic_state))
 
                 # Publish new receiver state with mqtt
-                self.subscription.publish_state(
+                await self.subscription.publish_state(
                     self.subscription.topic_state, self.options[state][0], retain=True)
             else:
                 raise NotImplementedError
@@ -276,7 +276,7 @@ class YamahaControl:
             return self.name
 
         async def on_rc_state_update(self, state):
-            self.subscription.publish_state(
+            await self.subscription.publish_state(
                 self.subscription.topic_state, state, retain=True)
 
         async def write_rc(self, state):
@@ -542,9 +542,9 @@ class YamahaControl:
                 vol_hex) * self.VOL_STEP) - 99.5
 
             # Update state
-            self.subscription.publish_state(
+            await self.subscription.publish_state(
                 self.subscription.topic_state, new_db_val, retain=True)
-            self.subscription.publish_state(
+            await self.subscription.publish_state(
                 self.subscription.topic_state + "/details",
                 json.dumps({
                     "volume_percentage": self.percentage(new_db_val)
@@ -1230,11 +1230,15 @@ class MqttClient:
             self.log.warning(
                 "Unexpected disconnetion from MQTT broker, return code >>%d<<", rc)
         self.loop.create_task(self.on_disconnect_callback())
+    
+    async def publish(self, topic_state, payload, qos=0, retain=False):
+        self.client.publish(topic_state, payload=payload,
+                            qos=qos, retain=retain)
 
-    def publish_state(self, topic_state, state_new, qos=0, retain=False):
+    async def publish_state(self, topic_state, state_new, qos=0, retain=False):
         self.log.info('Publishing state change of >>' +
                       str(topic_state) + '<< to >>' + str(state_new) + '<<.')
-        self.client.publish(topic_state, payload=state_new,
+        await self.publish(topic_state, payload=state_new,
                             qos=qos, retain=retain)
 
 
