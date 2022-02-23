@@ -214,7 +214,7 @@ class YamahaControl:
         def __str__(self):
             return str("Entity: %s" % self.name)
 
-        def on_rc_state_update(self, state):
+        async def on_rc_state_update(self, state):
             self.controller.log.info("[RcState] State: " + str(state))
             if state in self.options and len(self.options[state]) > 0:
                 self.controller.log.info("[RcState] Going to publish state >>%s<< for topic >>%s<<" % (
@@ -236,7 +236,6 @@ class YamahaControl:
                     return
             raise NotImplementedError
 
-        # event_name, data, kwargs):
         def on_mqtt_cmd_for_rc(self, mqtt_client, userdata, message):
             #self.controller.log.debug("[MqttMessage] EVENT: " + str(message.topic) + " with " + str(userdata))
             state_new = message.payload.decode("utf-8")
@@ -273,7 +272,7 @@ class YamahaControl:
         def __str__(self):
             return self.name
 
-        def on_rc_state_update(self, state):
+        async def on_rc_state_update(self, state):
             self.subscription.publish_state(
                 self.subscription.topic_state, state, retain=True)
 
@@ -534,7 +533,7 @@ class YamahaControl:
             # scale from [-80,0] to [0,1]
             return float((1 - 0) * (volume - (self.VOL_MIN)) / (0 - (self.VOL_MIN)) + 0)
 
-        def on_rc_state_update(self, vol_hex):
+        async def on_rc_state_update(self, vol_hex):
             # Process volume from hex string to -dB
             new_db_val = (YamahaControl.hex_to_dec(vol_hex) * self.VOL_STEP) - 99.5
 
@@ -948,10 +947,10 @@ class YamahaControl:
                                     self.log.info(
                                         "[RcRead] Object found for: " + event_data_desc)
                                     if m.group(5) in self.rc_event_list[m.group(4)]:
-                                        self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(
+                                        await self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(
                                             self.rc_event_list[m.group(4)][m.group(5)])
                                     else:
-                                        self.rc_event_list[m.group(
+                                        await self.rc_event_list[m.group(
                                             4)]['_object'].on_rc_state_update(m.group(5))
 
                                 else:
