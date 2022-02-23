@@ -1,8 +1,8 @@
 # YRXV1500-MQTT
 ## Control your Yamaha RX-V1500 via MQTT
 
-A python3 application that enables remote control of a Yamaha RX-V1500 A/V amplifier via MQTT. The script can run on a Raspberry Pi or any similar device, which is connected to a RX-V1500 amplivier via a RS232 connection. YRXV1500-MQTT connects to your exisiting MQTT broker, subscribes for command topics and publishes state changes, when any amplifier entity states are changed manually (e.g. using the amplifiers buttons).
-To simplify setup, the application also supports MQTT auto discovery for [HomeAssistant](https://homeassistant.io).  
+A python3 application that enables remote control of a Yamaha RX-V1500 A/V amplifier via MQTT. The script can run on a Raspberry Pi or any similar device, which is connected to a RX-V1500 amplivier via a RS232 serial connection. YRXV1500-MQTT connects to your exisiting MQTT broker, subscribes for command topics and publishes state changes, whenever any amplifier entity state is changed (e.g., one of the amplifier's buttons is pressed).
+To simplify the setup, the application also supports MQTT auto discovery for [HomeAssistant](https://home-assistant.io).  
 
 The script was tested on a Raspberry Pi running Raspian. Currently, not all RX-V1500 entities can be read or set.
 Use it on your own risk! The tool is provided as-is, with no guarantee that the RS232 commands work or don't damage your device.
@@ -15,12 +15,12 @@ Use it on your own risk! The tool is provided as-is, with no guarantee that the 
   
 
 ### Usage
-Easy: 
+Easy:  
 1. Clone this repository
 2. Edit the `config.yaml` file according to your needs
 3. Run `python3 controller.py`
 
-As service using systemd: 
+As service using systemd:  
 1. Same as *Easy*, but don't run manually.
 2. Edit file `systemd/yrxv1500-mqtt.service` and change working directory and file path of *controller.py* to your needs (defaults to `/srv/yrxv1500-mqtt/controller.py`)
 3. Link and enable systemd config:
@@ -31,8 +31,6 @@ sudo systemctl enable yrxv1500-mqtt.service
 sudo systemctl start yrxv1500-mqtt.service
 ```
 4. Verify service status `sudo systemctl status yrxv1500-mqtt.service`
-
-
 
 
 ## MQTT topics
@@ -73,6 +71,6 @@ sudo systemctl start yrxv1500-mqtt.service
 
 ## Integration into HomeAssistant
 MQTT enables easy integration in any HomeAssistant instance, which makes automation and remote control even smarter.
-Simply configure MQTT in HomeAssistant and enable MQTT auto discovery.
+Simply configure MQTT in HomeAssistant and enable MQTT auto discovery.  
 
-*Note*: Minimum HomeAssistant **Version 2021.6** required!
+*Note*: Minimum HomeAssistant **Version 2021.6** required!  
