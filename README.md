@@ -1,7 +1,8 @@
-# YRXV1500-MQTT - Controll your Yamaha RX-V1500 via MQTT
+# YRXV1500-MQTT
+## Control your Yamaha RX-V1500 via MQTT
 
 A python3 application that enables remote control of a Yamaha RX-V1500 A/V amplifier via MQTT. The script can run on a Raspberry Pi or any similar device, which is connected to a RX-V1500 amplivier via a RS232 connection. YRXV1500-MQTT connects to your exisiting MQTT broker, subscribes for command topics and publishes state changes, when any amplifier entity states are changed manually (e.g. using the amplifiers buttons).
-To simplify setup, the application also supports MQTT auto discovery for HomeAssistant.
+To simplify setup, the application also supports MQTT auto discovery for [HomeAssistant](https://homeassistant.io).  
 
 The script was tested on a Raspberry Pi running Raspian. Currently, not all RX-V1500 entities can be read or set.
 Use it on your own risk! The tool is provided as-is, with no guarantee that the RS232 commands work or don't damage your device.
@@ -70,8 +71,8 @@ sudo systemctl start yrxv1500-mqtt.service
 - `<PREFIX>/<IDENTIFIER>/power-zone-1/set `
 
 
-## Integration into Home Assistant
-MQTT enables easy integration in any Home Assistant instance, which makes automation and remote controll even more smart.
+## Integration into HomeAssistant
+MQTT enables easy integration in any HomeAssistant instance, which makes automation and remote control even smarter.
 Simply configure MQTT in HomeAssistant and enable MQTT auto discovery.
 
-*Note*: Minimum Home Assistant **Version 2021.6** required!
+*Note*: Minimum HomeAssistant **Version 2021.6** required!
