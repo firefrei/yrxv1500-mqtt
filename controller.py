@@ -211,7 +211,8 @@ class YamahaControl:
             # Init discovery messages and start periodic sending
             self.discovery = YamahaControl.RemoteEventDiscovery(
                 self.controller, self.controller.config.mqtt.discovery, self.subscription, self.mqtt_discovery_config, state_only)
-            self.controller.discovery_tasks.add(asyncio.Task(self.discovery.announce_periodically()))
+            self.controller.discovery_tasks.add(
+                asyncio.Task(self.discovery.announce_periodically()))
 
         def __str__(self):
             return str("Entity: %s" % self.name)
@@ -281,12 +282,12 @@ class YamahaControl:
         async def write_rc(self, state):
             self.controller.log.info(
                 "ERROR! Write on GenericSensor is not allowed! Tried: %s" % (state))
-        
+
         def mqtt_discovery_config(self, device_class=None, icon=None):
             i = icon if icon else self.icon
             dc = device_class if device_class else "sensor"
             return super().mqtt_discovery_config(dc, icon=i)
-    
+
     class GenericBinarySensorEntity(GenericSensorEntity):
         def mqtt_discovery_config(self):
             dev_cl, pl = super().mqtt_discovery_config("binary_sensor", icon=self.icon)
@@ -520,7 +521,7 @@ class YamahaControl:
 
         def __str__(self):
             return str("Master Volume")
-        
+
         def limit(self, volume, log=True):
             if not isinstance(volume, float):
                 volume = float(volume)
@@ -530,20 +531,21 @@ class YamahaControl:
                     self.controller.log.info(
                         "[V] Volume limit reached. Changed value to: %d" % (volume))
             return volume
-        
+
         def percentage(self, volume):
             # scale from [-80,0] to [0,1]
             return float((1 - 0) * (volume - (self.VOL_MIN)) / (0 - (self.VOL_MIN)) + 0)
 
         async def on_rc_state_update(self, vol_hex):
             # Process volume from hex string to -dB
-            new_db_val = (YamahaControl.hex_to_dec(vol_hex) * self.VOL_STEP) - 99.5
+            new_db_val = (YamahaControl.hex_to_dec(
+                vol_hex) * self.VOL_STEP) - 99.5
 
             # Update state
             self.subscription.publish_state(
                 self.subscription.topic_state, new_db_val, retain=True)
             self.subscription.publish_state(
-                self.subscription.topic_state + "/details", 
+                self.subscription.topic_state + "/details",
                 json.dumps({
                     "volume_percentage": self.percentage(new_db_val)
                 }),
@@ -558,7 +560,7 @@ class YamahaControl:
             self.controller.log.debug(
                 "[V] Volume to set: %s" % str(raw_db_val))
             await self.controller.rs232.write("230" + str(raw_db_val))
-        
+
         def mqtt_discovery_config(self):
             dev_cl, pl = super().mqtt_discovery_config("number", icon="mdi:volume-high")
             pl.update({
@@ -906,7 +908,7 @@ class YamahaControl:
         for sub in self.remote_subscriptions:
             await sub.unsubscribe()
         self.remote_subscriptions = set()
-    
+
     async def _clear_discovery_tasks(self):
         for task in self.discovery_tasks:
             task.cancel()
