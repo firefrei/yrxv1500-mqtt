@@ -1,7 +1,7 @@
 # YRXV1500-MQTT - Controll your Yamaha RX-V1500 via MQTT
 
-A tiny python3 tool that enables remote control of a Yamaha RX-V1500 amplifier. The script can run on a Raspberry Pi or similar device, which needs to be connected to the RX-V1500 via RS232 connection. YRXV1500-MQTT connects to your exisiting MQTT broker and subscribes for command topics. If the entity states are changed manually (e.g. using the amplifiers buttons), state updates of the RX-V1500 are published via MQTT.
-
+A python3 application that enables remote control of a Yamaha RX-V1500 A/V amplifier via MQTT. The script can run on a Raspberry Pi or any similar device, which is connected to a RX-V1500 amplivier via a RS232 connection. YRXV1500-MQTT connects to your exisiting MQTT broker, subscribes for command topics and publishes state changes, when any amplifier entity states are changed manually (e.g. using the amplifiers buttons).
+To simplify setup, the application also supports MQTT auto discovery for HomeAssistant.
 
 The script was tested on a Raspberry Pi running Raspian. Currently, not all RX-V1500 entities can be read or set.
 Use it on your own risk! The tool is provided as-is, with no guarantee that the RS232 commands work or don't damage your device.
@@ -10,14 +10,13 @@ Use it on your own risk! The tool is provided as-is, with no guarantee that the 
 - Yamaha RX-V1500 A/V-Reciever
 - Raspberry Pi (or similar) with RS232 interface or USB<->RS232 converter
 - Python3
-- Python3 library `pyserial` (will be installed by this tool on startup)
-- Python3 library `pyyaml` (will be installed by this tool on startup)
-- Python3 library `paho-mqtt` (will be installed by this tool on startup)
+- Python3 library `pyyaml`, `asyncio`, `pyserial-asyncio`, and `paho-mqtt` (will be installed by this tool on startup)
+  
 
 ### Usage
 Easy: 
 1. Clone this repository
-2. Edit the `config.yaml` file
+2. Edit the `config.yaml` file according to your needs
 3. Run `python3 controller.py`
 
 As service using systemd: 
@@ -39,6 +38,7 @@ sudo systemctl start yrxv1500-mqtt.service
 ### Syntax
 - State topics: `<PREFIX>/<IDENTIFIER>/<ENTITY>`  
 - Command topics: `<PREFIX>/<IDENTIFIER>/<ENTITY>/set`
+- Discovery topics: `<PREFIX>/<DEVICE_CLASS>/<UNIQUE_ID>/<ENTITY>`
 
 ### Supported control and sensor entities
 - `<PREFIX>/<IDENTIFIER>/playback-format`
@@ -72,6 +72,6 @@ sudo systemctl start yrxv1500-mqtt.service
 
 ## Integration into Home Assistant
 MQTT enables easy integration in any Home Assistant instance, which makes automation and remote controll even more smart.
-See file `home-assistant/configuration.yaml` for a configuration example.
+Simply configure MQTT in HomeAssistant and enable MQTT auto discovery.
 
 *Note*: Minimum Home Assistant **Version 2021.6** required!
