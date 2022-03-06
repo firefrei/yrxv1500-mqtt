@@ -1058,7 +1058,7 @@ class SerialClient:
             xonxoff=0,
             rtscts=0
         )
-        self.protocol.set_callbacks(self.on_read, self.sync_test_connection)
+        self.protocol.set_callbacks(self.on_read, self.sync_test_serial_connection)
         return self
 
     def close_connection(self):
@@ -1087,17 +1087,10 @@ class SerialClient:
                 self.protocol_transport.write(
                     self.format_command(data) if format else data)
 
-    @staticmethod
-    def format_command(command):
-        result = bytes()
-        if not(DC1.decode("utf-8") in command or DC2.decode("utf-8") in command or DC3.decode("utf-8") in command or STX.decode("utf-8") in command or ETX.decode("utf-8") in command):
-            result += STX
-        return (result + command.encode() + ETX)
+    def sync_test_serial_connection(self):
+        return self.loop.create_task(self.test_serial_connection())
 
-    def sync_test_connection(self):
-        return self.loop.create_task(self.test_connection())
-
-    async def test_connection(self):
+    async def test_serial_connection(self):
         self.log.info("Checking RS232 connection...")
         if not self.protocol_transport:
             return False
@@ -1111,6 +1104,13 @@ class SerialClient:
                 raise RuntimeError("Could not etablish connection.")
             await asyncio.sleep(1)
         self.log.info("Connection is open.")
+
+    @staticmethod
+    def format_command(command):
+        result = bytes()
+        if not(DC1.decode("utf-8") in command or DC2.decode("utf-8") in command or DC3.decode("utf-8") in command or STX.decode("utf-8") in command or ETX.decode("utf-8") in command):
+            result += STX
+        return (result + command.encode() + ETX)
 
     @staticmethod
     def iterbytes(b):
@@ -1128,53 +1128,6 @@ class SerialClient:
 
 
 class MqttClient:
-
-    class AsyncioHelper:
-        def __init__(self, loop, client):
-            self.log = logging.getLogger("mqtt-asyncio-helper")
-            self.loop = loop
-            self.client = client
-            self.client.on_socket_open = self.on_socket_open
-            self.client.on_socket_close = self.on_socket_close
-            self.client.on_socket_register_write = self.on_socket_register_write
-            self.client.on_socket_unregister_write = self.on_socket_unregister_write
-
-        def on_socket_open(self, client, userdata, sock):
-            self.log.debug("Socket opened")
-
-            def cb():
-                #self.log.debug("Socket is readable, calling loop_read")
-                client.loop_read()
-
-            self.loop.add_reader(sock, cb)
-            self.misc = self.loop.create_task(self.misc_loop())
-
-        def on_socket_close(self, client, userdata, sock):
-            self.log.debug("Socket closed")
-            self.loop.remove_reader(sock)
-            self.misc.cancel()
-
-        def on_socket_register_write(self, client, userdata, sock):
-            self.log.debug("Watching socket for writability.")
-
-            def cb():
-                self.log.debug("Socket is writable, calling loop_write")
-                client.loop_write()
-
-            self.loop.add_writer(sock, cb)
-
-        def on_socket_unregister_write(self, client, userdata, sock):
-            self.log.debug("Stop watching socket for writability.")
-            self.loop.remove_writer(sock)
-
-        async def misc_loop(self):
-            self.log.debug("misc_loop started")
-            while self.client.loop_misc() == mqtt_client.MQTT_ERR_SUCCESS:
-                try:
-                    await asyncio.sleep(1)
-                except asyncio.CancelledError:
-                    break
-            self.log.debug("misc_loop finished")
 
     def __init__(self, loop, config, on_connect_callback, on_disconnect_callback):
         self.log = logging.getLogger("mqtt")
@@ -1199,8 +1152,6 @@ class MqttClient:
         self.client.reconnect_delay_set(min_delay=1, max_delay=120)
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
-
-        self._aioh = self.AsyncioHelper(self.loop, self.client)
 
         # Try to connect to mqtt broker
         while True:
