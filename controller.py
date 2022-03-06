@@ -607,7 +607,7 @@ class YamahaControl:
         self.discovery_tasks = set()
         self.rc_event_list = None
         self.mqtt = self.loop.run_until_complete(MqttClient(
-            self.loop, self.config.mqtt, self._setup_rc_event_list, self._clear_remote_subscriptions).run())
+            self.loop, self.config.mqtt, self._setup_rc_event_list, self.clear).run())
 
     def __del__(self):
         """
@@ -619,10 +619,13 @@ class YamahaControl:
         if self.loop and self.loop.is_running():
             logging.debug("Terminating event loop...")
             self.loop.stop()
-
-    async def async_terminate(self):
+    
+    async def clear(self):
         await self._clear_discovery_tasks()
         await self._clear_remote_subscriptions()
+
+    async def async_terminate(self):
+        await self.clear()
 
         if self.mqtt:
             self.log.info("Terminating MQTT connection...")
