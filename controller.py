@@ -184,9 +184,11 @@ class YamahaControl:
             if not self.state_only:
                 self.topic_command = str("%s/%s" % (self.topic_state, "set"))
                 self.controller.mqtt.client.subscribe(
-                    self.topic_command, qos=1)
+                    self.topic_command, 
+                    qos=1)
                 self.controller.mqtt.client.message_callback_add(
-                    self.topic_command, self.on_event_callback)
+                    self.topic_command, 
+                    self.on_event_callback)
                 self.controller.log.info(
                     "Registered listener for topic: %s" % (self.topic_command))
             else:
@@ -220,7 +222,7 @@ class YamahaControl:
                 self.controller, 
                 self.controller.config.mqtt, 
                 topic_extension, 
-                self.on_mqtt_cmd_for_rc, 
+                self.on_mqtt_cmd_for_yrx, 
                 state_only)
             self.controller.remote_subscriptions.add(self.subscription)
 
@@ -235,17 +237,17 @@ class YamahaControl:
             self.controller.discovery_handles.add(self.discovery)
 
         def __str__(self):
-            return str("Entity: %s" % self.name)
+            return str("Entity: %s" % (self.name))
 
-        async def on_rc_state_update(self, state):
-            self.controller.log.info("[RcState] State: " + str(state))
+        async def on_yrx_state_update(self, state):
+            self.controller.log.info("[YrxState] State: %s" % (state))
             if hasattr(self, "options") and state in self.options and len(self.options[state]) > 0:
                 state_mqtt = self.options[state][0]
             else:
                 state_mqtt = state
 
             if state_mqtt:
-                self.controller.log.info("[RcState] Going to publish state >>%s<< for topic >>%s<<" % (
+                self.controller.log.info("[YrxState] Going to publish state >>%s<< to mqtt topic >>%s<<" % (
                     str(state_mqtt), self.subscription.topic_state))
 
                 # Publish new receiver state with mqtt
@@ -256,23 +258,23 @@ class YamahaControl:
             else:
                 raise NotImplementedError
 
-        async def write_rc(self, state):
+        async def write_to_yrx(self, state):
             for opt in self.options.values():
                 if opt[0] == state:
                     if opt[1] is not None:
-                        self.controller.log.info('[WriteRc] Setting >>%s<< (%s) to >>%s<<.' % (
+                        self.controller.log.info('[WriteYrx] Setting >>%s<< (%s) to >>%s<<.' % (
                             str(self), self.subscription.topic_state, state))
                         await self.controller.rs232.write(opt[1])
                     return
             raise NotImplementedError
 
-        def on_mqtt_cmd_for_rc(self, mqtt_client, userdata, message):
+        def on_mqtt_cmd_for_yrx(self, mqtt_client, userdata, message):
             #self.controller.log.debug("[MqttMessage] EVENT: %s with %s" % (message.topic, userdata))
             state_new = message.payload.decode("utf-8")
 
             self.controller.log.info("[MqttMessage] Processing command >>%s<< with data >>%s<<" % (
                 message.topic, state_new))
-            self.controller.loop.create_task(self.write_rc(state_new))
+            self.controller.loop.create_task(self.write_to_yrx(state_new))
 
         def mqtt_discovery_config(self, device_class=None, icon=None):
             if device_class is None:
@@ -302,8 +304,8 @@ class YamahaControl:
         def __str__(self):
             return self.name
 
-        async def write_rc(self, state):
-            self.controller.log.info(
+        async def write_to_yrx(self, state):
+            self.controller.log.warning(
                 "ERROR! Write on GenericSensor is not allowed! Tried: %s" % (state))
 
         def mqtt_discovery_config(self, device_class=None, icon=None):
@@ -332,9 +334,9 @@ class YamahaControl:
             'Off': ('off', '07a1e')  # Power Off
         }
 
-        async def write_rc(self, state):
+        async def write_to_yrx(self, state):
             if state == 'on':
-                self.controller.log.info('[WriteRc] Setting %s (%s) to "%s".' % (
+                self.controller.log.info('[WriteYrx] Setting %s (%s) to "%s".' % (
                     str(self), self.subscription.topic_state, state))
                 commands = [
                     DC1.decode("utf-8") + "000",
@@ -344,7 +346,7 @@ class YamahaControl:
                 ]
                 await self.controller.rs232.write(commands)
             elif state == 'off':
-                self.controller.log.info('[WriteRc] Setting %s (%s) to "%s".' % (
+                self.controller.log.info('[WriteYrx] Setting %s (%s) to "%s".' % (
                     str(self), self.subscription.topic_state, state))
                 await self.controller.rs232.write(self.options['Off'][1])
             else:
@@ -485,10 +487,10 @@ class YamahaControl:
         def __str__(self):
             return str("Tuner Preset")
 
-        async def write_rc(self, state):
+        async def write_to_yrx(self, state):
             # Format in HA: '2.0' (string) -> only use '2'
             if len(state) > 0:
-                await super().write_rc(state[0])
+                await super().write_to_yrx(state[0])
 
     class OsdEntity(EntityBase):
         options = {
@@ -564,7 +566,7 @@ class YamahaControl:
             # scale from [-80,0] to [0,1]
             return float((1 - 0) * (volume - (self.VOL_MIN)) / (0 - (self.VOL_MIN)) + 0)
 
-        async def on_rc_state_update(self, vol_hex):
+        async def on_yrx_state_update(self, vol_hex):
             # Process volume from hex string to -dB
             new_db_val = (YamahaControl.hex_to_dec(
                 vol_hex) * self.VOL_STEP) - 99.5
@@ -580,7 +582,7 @@ class YamahaControl:
                 retain=True
             )
 
-        async def write_rc(self, vol_new):
+        async def write_to_yrx(self, vol_new):
             # Process volume from -dB string to hex
             new_normed = int((self.limit(vol_new) + 99.5) / self.VOL_STEP)
             raw_db_val = str(
@@ -633,14 +635,14 @@ class YamahaControl:
         self.loop.create_task(self.rs232.run())
 
         # Setup MQTT client
-        # Callback: Generate rc event list which registers MQTT subscriptions
+        # Callback: Generate yrx event list which registers MQTT subscriptions
         self.remote_subscriptions = set()
         self.discovery_handles = set()
-        self.rc_event_list = None
+        self.yrx_event_list = None
         self.mqtt = MqttClient(
             self.loop, 
             self.config.mqtt, 
-            self._setup_rc_event_list, 
+            self._setup_yrx_event_list, 
             self.clear)
         self.loop.create_task(self.mqtt.run())
 
@@ -679,9 +681,9 @@ class YamahaControl:
         self.loop.close()
         logging.debug("Closed event loop.")
 
-    async def _setup_rc_event_list(self):
+    async def _setup_yrx_event_list(self):
         # Define possible events/messages from RX-V1500 and initialize Entity Objects
-        self.rc_event_list = {
+        self.yrx_event_list = {
             '00': {
                 '_content': 'NoGuard',
                 '00': 'Ok',
@@ -960,7 +962,7 @@ class YamahaControl:
 
         parmre = re.compile('(.)(.)(.)(..)(..)')
         for char_byte in self.rs232.iterbytes(data):
-            #self.log.debug("[RcRead] char_byte: "+ str(char_byte))
+            #self.log.debug("[YrxRead] char_byte: "+ str(char_byte))
 
             # Reset read-buffer if device control byte or 'Start of Line' (STX) read
             if char_byte == DC1 or char_byte == DC2 or char_byte == DC3 or char_byte == DC4 or char_byte == STX:
@@ -969,59 +971,59 @@ class YamahaControl:
 
             # If 'End of Line' (ETX) reached -> start evaluation
             if char_byte == ETX:
-                self.log.debug('[RcRead] line: >>%s<<' % (line))
+                self.log.debug('[YrxRead] line: >>%s<<' % (line))
 
                 if line[0] == STX.decode("utf-8"):
-                    self.log.debug('[RcRead] General Report')
+                    self.log.debug('[YrxRead] General Report')
 
                     try:
                         m = parmre.match(line)
                         if m is not None:
 
-                            if m.group(4) in self.rc_event_list:
+                            if m.group(4) in self.yrx_event_list:
 
-                                if m.group(5) in self.rc_event_list[m.group(4)]:
+                                if m.group(5) in self.yrx_event_list[m.group(4)]:
                                     event_data_desc = str("%s.%s" % (
-                                        self.rc_event_list[m.group(4)]['_content'],
-                                        self.rc_event_list[m.group(4)][m.group(5)]))
+                                        self.yrx_event_list[m.group(4)]['_content'],
+                                        self.yrx_event_list[m.group(4)][m.group(5)]))
                                 else:
                                     event_data_desc = str(
-                                        self.rc_event_list[m.group(4)]['_content'])
+                                        self.yrx_event_list[m.group(4)]['_content'])
 
-                                if '_object' in self.rc_event_list[m.group(4)]:
+                                if '_object' in self.yrx_event_list[m.group(4)]:
                                     self.log.info(
-                                        "[RcRead] Object found for: %s" % (event_data_desc))
-                                    if m.group(5) in self.rc_event_list[m.group(4)]:
-                                        await self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(
-                                            self.rc_event_list[m.group(4)][m.group(5)])
+                                        "[YrxRead] Object found for: %s" % (event_data_desc))
+                                    if m.group(5) in self.yrx_event_list[m.group(4)]:
+                                        await self.yrx_event_list[m.group(4)]['_object'].on_yrx_state_update(
+                                            self.yrx_event_list[m.group(4)][m.group(5)])
                                     else:
-                                        await self.rc_event_list[
-                                            m.group(4)]['_object'].on_rc_state_update(m.group(5))
+                                        await self.yrx_event_list[
+                                            m.group(4)]['_object'].on_yrx_state_update(m.group(5))
 
                                 else:
                                     self.log.warning(
-                                        "[RcRead] No object found for: %s" % (event_data_desc))
+                                        "[YrxRead] No object found for: %s" % (event_data_desc))
 
                             else:
                                 self.log.warning(
-                                    "[RcRead] Unknown event received: '%s'." % (m.group(4)))
+                                    "[YrxRead] Unknown event received: '%s'." % (m.group(4)))
                     except NotImplementedError:
                         self.log.warning(
-                            "[RcRead] Got unknown value '%s' for event '%s'" % (m.group(5), m.group(4)))
+                            "[YrxRead] Got unknown value '%s' for event '%s'" % (m.group(5), m.group(4)))
                     except Exception as e:
                         self.log.warning(
-                            "[RcRead] Unhandled exception in loop: %s" % (e))
+                            "[YrxRead] Unhandled exception in loop: %s" % (e))
 
                 elif line[0] == DC1.decode("utf-8"):
-                    self.log.debug('[RcRead] Unrecognised Report with DC1')
+                    self.log.debug('[YrxRead] Unrecognised Report with DC1')
                 elif line[0] == DC2.decode("utf-8"):
-                    self.log.debug('[RcRead] Unrecognised Report with DC2')
+                    self.log.debug('[YrxRead] Unrecognised Report with DC2')
                 elif line[0] == DC3.decode("utf-8"):
-                    self.log.debug('[RcRead] Unrecognised Report with DC3')
+                    self.log.debug('[YrxRead] Unrecognised Report with DC3')
                 elif line[0] == DC4.decode("utf-8"):
-                    self.log.debug('[RcRead] Unrecognised Report with DC4')
+                    self.log.debug('[YrxRead] Unrecognised Report with DC4')
                 else:
-                    self.log.warning('[RcRead] Unrecognised Report')
+                    self.log.warning('[YrxRead] Unrecognised Report')
 
                 # Finally, reset line
                 line = ""
