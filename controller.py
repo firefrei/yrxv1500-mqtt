@@ -598,16 +598,18 @@ class YamahaControl:
         self.loop = asyncio.get_event_loop()
 
         # Setup physical device access via serial connection
-        self.rs232 = self.loop.run_until_complete(SerialClient(
-            self.loop, self.config.serial, self.process_serial_data).run())
+        self.rs232 = SerialClient(
+            self.loop, self.config.serial, self.process_serial_data)
+        self.loop.create_task(self.rs232.run())
 
         # Setup MQTT client
         # Callback: Generate rc event list which registers MQTT subscriptions
         self.remote_subscriptions = set()
         self.discovery_tasks = set()
         self.rc_event_list = None
-        self.mqtt = self.loop.run_until_complete(MqttClient(
-            self.loop, self.config.mqtt, self._setup_rc_event_list, self.clear).run())
+        self.mqtt = MqttClient(
+            self.loop, self.config.mqtt, self._setup_rc_event_list, self.clear)
+        self.loop.create_task(self.mqtt.run())
 
     def __del__(self):
         """
@@ -1059,7 +1061,6 @@ class SerialClient:
             rtscts=0
         )
         self.protocol.set_callbacks(self.on_read, self.sync_test_serial_connection)
-        return self
 
     def close_connection(self):
         self.log.info("Closing connection...")
@@ -1176,6 +1177,27 @@ class MqttClient:
                     break
             self.log.debug("misc_loop finished")
 
+        async def connect(self, config):
+            while True:
+                try:
+                    await self.loop.run_in_executor(None, self._client_connect_blocking, config)
+                    break
+                except (socket.gaierror, socket.timeout) as err:
+                    self.log.warning(
+                        "Could not resolve or reach MQTT broker. Going to try again... (Reason: %s)" % str(err))
+                    await asyncio.sleep(1)
+                except ConnectionError as err:
+                    self.log.warning(
+                        "Could not connect to MQTT broker. Going to try again... (Reason: %s)" % str(err))
+                    await asyncio.sleep(1)
+                except BaseException:
+                    raise
+
+        def _client_connect_blocking(self, config):
+            self.client.connect(
+                config.host, port=config.port, keepalive=config.keepalive)
+            self.client.socket().setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
+
     def __init__(self, loop, config, on_connect_callback, on_disconnect_callback):
         self.log = logging.getLogger("mqtt")
 
@@ -1200,24 +1222,10 @@ class MqttClient:
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
 
+        # Connect to MQTT broker
         self._aioh = self.AsyncioHelper(self.loop, self.client)
-
-        # Try to connect to mqtt broker
-        while True:
-            try:
-                self.client.connect(
-                    self.config.host, port=self.config.port, keepalive=self.config.keepalive)
-                self.client.socket().setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
-                break
-            except socket.gaierror as err:
-                self.log.warning(
-                    "Could not resolve or reach MQTT broker. Going to try again... (Reason: %s)" % str(err))
-                time.sleep(1)
-            except BaseException:
-                raise
-
-        return self
-
+        await self._aioh.connect(self.config)
+    
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self.log.info("Connected to MQTT broker >>%s<<" %
@@ -1233,7 +1241,11 @@ class MqttClient:
             self.log.warning(
                 "Unexpected disconnetion from MQTT broker, return code >>%d<<", rc)
         self.loop.create_task(self.on_disconnect_callback())
-    
+
+        # Trigger reconnect
+        if rc != 0:
+            self.loop.create_task(self._aioh.connect(self.config))
+
     async def publish(self, topic_state, payload, qos=0, retain=False):
         self.client.publish(topic_state, payload=payload,
                             qos=qos, retain=retain)
