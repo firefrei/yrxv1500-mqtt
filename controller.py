@@ -113,43 +113,53 @@ class YamahaControl:
             # functions alias
             self.publish = self.controller.mqtt.publish
 
+            # Configure and prepare for announcements
+            self.configure()
+
+        def configure(self):
+            # Retrieve announcement info from entity
+            device_class, self.announce_payload = self.discovery_callback()
+            if not self.announce_payload:
+                return
+
+            # Prepare payload
+            self.announce_payload.update({
+                "~": self.subscription.topic_state,
+                "stat_t": "~",
+            })
+            if not self.state_only:
+                self.announce_payload.update({
+                    "cmd_t": "~/set",
+                })
+
+            if device_class == "switch":
+                self.announce_payload.update({
+                    "pl_on": "on",
+                    "pl_off": "off"
+                })
+
+            # Create and publish message
+            self.announce_topic = "%s/%s/%s/%s/config" % (
+                self.config.topic_prefix,
+                device_class,
+                self.config.unique_id,
+                self.subscription.topic_extension
+            )
+
         async def announce_periodically(self, period=5*60):
+            self.controller.log.info(
+                "Starting periodic discovery announcements for topic: %s" % str(self.announce_topic))
             while True:
                 await self.announce()
                 await asyncio.sleep(period)
 
         async def announce(self):
             # Send discovery message
-            device_class, payload = self.discovery_callback()
-            if not payload:
-                return
-
-            payload.update({
-                "~": self.subscription.topic_state,
-                "stat_t": "~",
-            })
-            if not self.state_only:
-                payload.update({
-                    "cmd_t": "~/set",
-                })
-
-            if device_class == "switch":
-                payload.update({
-                    "pl_on": "on",
-                    "pl_off": "off"
-                })
-
-            # Create and publish message
-            topic = "%s/%s/%s/%s/config" % (
-                self.config.topic_prefix,
-                device_class,
-                self.config.unique_id,
-                self.subscription.topic_extension
-            )
-            await self.publish(topic, json.dumps(payload), retain=True)
+            await self.publish(self.announce_topic, json.dumps(self.announce_payload), retain=True)
 
         async def revert(self):
-            raise NotImplementedError
+           self.controller.log.info(
+                "Stopped periodic discovery announcements for topic: %s" % str(self.announce_topic))
 
     class RemoteEventSubscription:
         def __init__(self, controller, config, topic_extension, on_event_callback, state_only=False):
@@ -205,14 +215,22 @@ class YamahaControl:
             self.controller = controller
 
             self.subscription = YamahaControl.RemoteEventSubscription(
-                self.controller, self.controller.config.mqtt, topic_extension, self.on_mqtt_cmd_for_rc, state_only)
+                self.controller, 
+                self.controller.config.mqtt, 
+                topic_extension, 
+                self.on_mqtt_cmd_for_rc, 
+                state_only)
             self.controller.remote_subscriptions.add(self.subscription)
 
             # Init discovery messages and start periodic sending
             self.discovery = YamahaControl.RemoteEventDiscovery(
-                self.controller, self.controller.config.mqtt.discovery, self.subscription, self.mqtt_discovery_config, state_only)
-            self.controller.discovery_tasks.add(
-                asyncio.Task(self.discovery.announce_periodically()))
+                self.controller, 
+                self.controller.config.mqtt.discovery, 
+                self.subscription, 
+                self.mqtt_discovery_config, 
+                state_only)
+            self.discovery.task = self.controller.loop.create_task(self.discovery.announce_periodically())
+            self.controller.discovery_handles.add(self.discovery)
 
         def __str__(self):
             return str("Entity: %s" % self.name)
@@ -605,7 +623,7 @@ class YamahaControl:
         # Setup MQTT client
         # Callback: Generate rc event list which registers MQTT subscriptions
         self.remote_subscriptions = set()
-        self.discovery_tasks = set()
+        self.discovery_handles = set()
         self.rc_event_list = None
         self.mqtt = MqttClient(
             self.loop, self.config.mqtt, self._setup_rc_event_list, self.clear)
@@ -623,7 +641,7 @@ class YamahaControl:
             self.loop.stop()
     
     async def clear(self):
-        await self._clear_discovery_tasks()
+        await self._clear_discovery_handles()
         await self._clear_remote_subscriptions()
 
     async def async_terminate(self):
@@ -914,10 +932,11 @@ class YamahaControl:
             await sub.unsubscribe()
         self.remote_subscriptions = set()
 
-    async def _clear_discovery_tasks(self):
-        for task in self.discovery_tasks:
-            task.cancel()
-        self.discovery_tasks = set()
+    async def _clear_discovery_handles(self):
+        for handle in self.discovery_handles:
+            handle.task.cancel()
+            await handle.revert()
+        self.discovery_handles = set()
 
     # Serial data parser
     # Good code example: https://github.com/memphi2/homie-yamaha-rs232/blob/master/src/main.cpp
