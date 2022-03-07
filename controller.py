@@ -147,26 +147,29 @@ class YamahaControl:
 
         async def announce_periodically(self, period=5*60):
             self.controller.log.info(
-                "Starting periodic discovery announcements for topic: %s" % str(self.announce_topic))
+                "Starting periodic discovery announcements for topic: %s" % (self.announce_topic))
             while True:
                 await self.announce()
                 await asyncio.sleep(period)
 
         async def announce(self):
             # Send discovery message
-            await self.publish(self.announce_topic, json.dumps(self.announce_payload), retain=True)
+            await self.publish(
+                self.announce_topic,
+                json.dumps(self.announce_payload),
+                retain=True)
 
         async def revert(self):
            self.controller.log.info(
-                "Stopped periodic discovery announcements for topic: %s" % str(self.announce_topic))
+                "Stopped periodic discovery announcements for topic: %s" % (self.announce_topic))
 
     class RemoteEventSubscription:
         def __init__(self, controller, config, topic_extension, on_event_callback, state_only=False):
             self.controller = controller
             self.config = config
             self.topic_extension = topic_extension
-            self.topic_state = str(
-                "%s/%s/%s" % (self.config.topic_prefix, self.config.client_id, topic_extension))
+            self.topic_state = str("%s/%s/%s" % (
+                self.config.topic_prefix, self.config.client_id, topic_extension))
             self.on_event_callback = on_event_callback
             self.state_only = state_only
 
@@ -175,7 +178,7 @@ class YamahaControl:
 
         async def subscribe(self):
             self.controller.log.info(
-                "Publishing states for topic: %s" % str(self.topic_state))
+                "Publishing states for topic: %s" % (self.topic_state))
 
             # Subscribe for command topic
             if not self.state_only:
@@ -185,7 +188,7 @@ class YamahaControl:
                 self.controller.mqtt.client.message_callback_add(
                     self.topic_command, self.on_event_callback)
                 self.controller.log.info(
-                    "Registered listener for topic: %s" % str(self.topic_command))
+                    "Registered listener for topic: %s" % (self.topic_command))
             else:
                 self.topic_command = None
 
@@ -195,10 +198,10 @@ class YamahaControl:
                     self.topic_command)
                 self.controller.mqtt.client.unsubscribe(self.topic_command)
                 self.controller.log.info(
-                    "Removed listener for topic: %s" % str(self.topic_command))
+                    "Removed listener for topic: %s" % (self.topic_command))
 
         def __str__(self):
-            return str("RemoteEventSubscription: %s" % self.topic_state)
+            return str("RemoteEventSubscription: %s" % (self.topic_state))
 
     class EntityBase:
         """
@@ -250,18 +253,18 @@ class YamahaControl:
             for opt in self.options.values():
                 if opt[0] == state:
                     if opt[1] is not None:
-                        self.controller.log.info('[WriteRc] Setting >>' + str(self) + '<< (' + str(
-                            self.subscription.topic_state) + ') to >>' + str(state) + '<<.')
+                        self.controller.log.info('[WriteRc] Setting >>%s<< (%s) to >>%s<<.' % (
+                            str(self), self.subscription.topic_state, state))
                         await self.controller.rs232.write(opt[1])
                     return
             raise NotImplementedError
 
         def on_mqtt_cmd_for_rc(self, mqtt_client, userdata, message):
-            #self.controller.log.debug("[MqttMessage] EVENT: " + str(message.topic) + " with " + str(userdata))
+            #self.controller.log.debug("[MqttMessage] EVENT: %s with %s" % (message.topic, userdata))
             state_new = message.payload.decode("utf-8")
 
-            self.controller.log.info("[MqttMessage] Processing command >>" + str(
-                message.topic) + "<< with data >>" + str(state_new) + "<<")
+            self.controller.log.info("[MqttMessage] Processing command >>%s<< with data >>%s<<" % (
+                message.topic, state_new))
             self.controller.loop.create_task(self.write_rc(state_new))
 
         def mqtt_discovery_config(self, device_class=None, icon=None):
@@ -294,7 +297,9 @@ class YamahaControl:
 
         async def on_rc_state_update(self, state):
             await self.subscription.publish_state(
-                self.subscription.topic_state, state, retain=True)
+                self.subscription.topic_state, 
+                state, 
+                retain=True)
 
         async def write_rc(self, state):
             self.controller.log.info(
@@ -323,8 +328,8 @@ class YamahaControl:
 
         async def write_rc(self, state):
             if state == 'on':
-                self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(
-                    self.subscription.topic_state) + ') to "' + str(state) + '".')
+                self.controller.log.info('[WriteRc] Setting %s (%s) to "%s".' % (
+                    str(self), self.subscription.topic_state, state))
                 commands = [
                     DC1.decode("utf-8") + "000",
                     "20000",
@@ -333,8 +338,8 @@ class YamahaControl:
                 ]
                 await self.controller.rs232.write(commands)
             elif state == 'off':
-                self.controller.log.info('[WriteRc] Setting ' + str(self) + ' (' + str(
-                    self.subscription.topic_state) + ') to "' + str(state) + '".')
+                self.controller.log.info('[WriteRc] Setting %s (%s) to "%s".' % (
+                    str(self), self.subscription.topic_state, state))
                 await self.controller.rs232.write(self.options['Off'][1])
             else:
                 raise NotImplementedError
@@ -616,7 +621,9 @@ class YamahaControl:
 
         # Setup physical device access via serial connection
         self.rs232 = SerialClient(
-            self.loop, self.config.serial, self.process_serial_data)
+            self.loop, 
+            self.config.serial, 
+            self.process_serial_data)
         self.loop.create_task(self.rs232.run())
 
         # Setup MQTT client
@@ -625,7 +632,10 @@ class YamahaControl:
         self.discovery_handles = set()
         self.rc_event_list = None
         self.mqtt = MqttClient(
-            self.loop, self.config.mqtt, self._setup_rc_event_list, self.clear)
+            self.loop, 
+            self.config.mqtt, 
+            self._setup_rc_event_list, 
+            self.clear)
         self.loop.create_task(self.mqtt.run())
 
     def __del__(self):
@@ -965,35 +975,36 @@ class YamahaControl:
                             if m.group(4) in self.rc_event_list:
 
                                 if m.group(5) in self.rc_event_list[m.group(4)]:
-                                    event_data_desc = str(self.rc_event_list[m.group(
-                                        4)]['_content'] + '.' + self.rc_event_list[m.group(4)][m.group(5)])
+                                    event_data_desc = str("%s.%s" % (
+                                        self.rc_event_list[m.group(4)]['_content'],
+                                        self.rc_event_list[m.group(4)][m.group(5)]))
                                 else:
                                     event_data_desc = str(
                                         self.rc_event_list[m.group(4)]['_content'])
 
                                 if '_object' in self.rc_event_list[m.group(4)]:
                                     self.log.info(
-                                        "[RcRead] Object found for: " + event_data_desc)
+                                        "[RcRead] Object found for: %s" % (event_data_desc))
                                     if m.group(5) in self.rc_event_list[m.group(4)]:
                                         await self.rc_event_list[m.group(4)]['_object'].on_rc_state_update(
                                             self.rc_event_list[m.group(4)][m.group(5)])
                                     else:
-                                        await self.rc_event_list[m.group(
-                                            4)]['_object'].on_rc_state_update(m.group(5))
+                                        await self.rc_event_list[
+                                            m.group(4)]['_object'].on_rc_state_update(m.group(5))
 
                                 else:
                                     self.log.warning(
-                                        "[RcRead] No object found for: " + event_data_desc)
+                                        "[RcRead] No object found for: %s" % (event_data_desc))
 
                             else:
                                 self.log.warning(
-                                    "[RcRead] Unknown event received: '" + str(m.group(4)) + "'.")
+                                    "[RcRead] Unknown event received: '%s'." % (m.group(4)))
                     except NotImplementedError:
                         self.log.warning(
-                            "[RcRead] Got unknown value '" + str(m.group(5)) + " for event '" + str(m.group(4)) + "'")
+                            "[RcRead] Got unknown value '%s' for event '%s'" % (m.group(5), m.group(4)))
                     except Exception as e:
                         self.log.warning(
-                            "[RcRead] Unhandled exception in loop: " + str(e))
+                            "[RcRead] Unhandled exception in loop: %s" % (e))
 
                 elif line[0] == DC1.decode("utf-8"):
                     self.log.debug('[RcRead] Unrecognised Report with DC1')
@@ -1078,7 +1089,9 @@ class SerialClient:
             xonxoff=0,
             rtscts=0
         )
-        self.protocol.set_callbacks(self.on_read, self.sync_test_serial_connection)
+        self.protocol.set_callbacks(
+            self.on_read,
+            self.sync_test_serial_connection)
 
     def close_connection(self):
         self.log.info("Closing connection...")
@@ -1162,7 +1175,7 @@ class MqttClient:
             self.log.debug("Socket opened")
 
             def cb():
-                #self.log.debug("Socket is readable, calling loop_read")
+                #self.log.debug("Socket is readable...")
                 client.loop_read()
 
             self.loop.add_reader(sock, cb)
@@ -1174,16 +1187,14 @@ class MqttClient:
             self.misc.cancel()
 
         def on_socket_register_write(self, client, userdata, sock):
-            self.log.debug("Watching socket for writability.")
-
             def cb():
-                self.log.debug("Socket is writable, calling loop_write")
+                #self.log.debug("Socket is writable...")
                 client.loop_write()
 
             self.loop.add_writer(sock, cb)
 
         def on_socket_unregister_write(self, client, userdata, sock):
-            self.log.debug("Stop watching socket for writability.")
+            self.log.debug("Socket is not writeable anymore")
             self.loop.remove_writer(sock)
 
         async def misc_loop(self):
@@ -1213,7 +1224,9 @@ class MqttClient:
 
         def _client_connect_blocking(self, config):
             self.client.connect(
-                config.host, port=config.port, keepalive=config.keepalive)
+                config.host,
+                port=config.port,
+                keepalive=config.keepalive)
             self.client.socket().setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
 
     def __init__(self, loop, config, on_connect_callback, on_disconnect_callback):
@@ -1265,14 +1278,20 @@ class MqttClient:
             self.loop.create_task(self._aioh.connect(self.config))
 
     async def publish(self, topic_state, payload, qos=0, retain=False):
-        self.client.publish(topic_state, payload=payload,
-                            qos=qos, retain=retain)
+        self.client.publish(
+            topic_state,
+            payload=payload,
+            qos=qos,
+            retain=retain)
 
     async def publish_state(self, topic_state, state_new, qos=0, retain=False):
         self.log.info('Publishing state change of >>' +
                       str(topic_state) + '<< to >>' + str(state_new) + '<<.')
-        await self.publish(topic_state, payload=state_new,
-                            qos=qos, retain=retain)
+        await self.publish(
+            topic_state, 
+            payload=state_new,
+            qos=qos,
+            retain=retain)
 
 
 #
