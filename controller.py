@@ -208,7 +208,7 @@ class YamahaControl:
         Base class for each configuration entity
         """
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
         }
 
         def __init__(self, controller, topic_extension, state_only=False):
@@ -239,13 +239,20 @@ class YamahaControl:
 
         async def on_rc_state_update(self, state):
             self.controller.log.info("[RcState] State: " + str(state))
-            if state in self.options and len(self.options[state]) > 0:
+            if hasattr(self, "options") and state in self.options and len(self.options[state]) > 0:
+                state_mqtt = self.options[state][0]
+            else:
+                state_mqtt = state
+
+            if state_mqtt:
                 self.controller.log.info("[RcState] Going to publish state >>%s<< for topic >>%s<<" % (
-                    str(self.options[state][0]), self.subscription.topic_state))
+                    str(state_mqtt), self.subscription.topic_state))
 
                 # Publish new receiver state with mqtt
                 await self.subscription.publish_state(
-                    self.subscription.topic_state, self.options[state][0], retain=True)
+                    self.subscription.topic_state,
+                    state_mqtt,
+                    retain=True)
             else:
                 raise NotImplementedError
 
@@ -295,12 +302,6 @@ class YamahaControl:
         def __str__(self):
             return self.name
 
-        async def on_rc_state_update(self, state):
-            await self.subscription.publish_state(
-                self.subscription.topic_state, 
-                state, 
-                retain=True)
-
         async def write_rc(self, state):
             self.controller.log.info(
                 "ERROR! Write on GenericSensor is not allowed! Tried: %s" % (state))
@@ -311,17 +312,22 @@ class YamahaControl:
             return super().mqtt_discovery_config(dc, icon=i)
 
     class GenericBinarySensorEntity(GenericSensorEntity):
+        options = {
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
+            'On': ('on', None),
+            'Off': ('off', None)
+        }
         def mqtt_discovery_config(self):
             dev_cl, pl = super().mqtt_discovery_config("binary_sensor", icon=self.icon)
             pl.update({
-                "payload_on": "On",
-                "payload_off": "Off"
+                "payload_on": self.options["On"][0],
+                "payload_off": self.options["Off"][0]
             })
             return dev_cl, pl
 
     class PowerEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'On': ('on', '07a1d'),  # Power On
             'Off': ('off', '07a1e')  # Power Off
         }
@@ -352,7 +358,7 @@ class YamahaControl:
 
     class ResetEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             # Reset all RS232 controlled settings # (DC3, DEL, DEL, DEL, ETX)
             'On': ('on', "%s%s%s%s" % (DC3.decode("utf-8"), DEL.decode("utf-8"), DEL.decode("utf-8"), DEL.decode("utf-8"))),
             'Off': ('off', None)
@@ -366,7 +372,7 @@ class YamahaControl:
 
     class PowerZone1Entity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'On': ('on', '07e7e'),  # Power On
             'Off': ('off', '07e7f')  # Power Off
         }
@@ -379,7 +385,7 @@ class YamahaControl:
 
     class PowerZone2Entity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'On': ('on', '07eba'),  # Power On
             'Off': ('off', '07ebb')  # Power Off
         }
@@ -392,7 +398,7 @@ class YamahaControl:
 
     class SpeakersAEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'On': ('on', '07eab'),  # Power On
             'Off': ('off', '07eac')  # Power Off
         }
@@ -405,7 +411,7 @@ class YamahaControl:
 
     class SpeakersBEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'On': ('on', '07ead'),  # Power On
             'Off': ('off', '07eae')  # Power Off
         }
@@ -418,7 +424,7 @@ class YamahaControl:
 
     class InputSourceEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'Phono': ('phono', '07a14'),
             'CD': ('cd', '07a15'),
             'Tuner': ('tuner', '07a16'),
@@ -442,7 +448,7 @@ class YamahaControl:
 
     class InputModeEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'Auto': ('auto', '07ea6'),
             'DTS': ('dts', '07ea8'),
             'Analog': ('analog', '07eaa'),
@@ -460,7 +466,7 @@ class YamahaControl:
 
     class TunerPresetEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             '1': ('1', '07ae5'),
             '2': ('2', '07ae6'),
             '3': ('3', '07ae7'),
@@ -486,7 +492,7 @@ class YamahaControl:
 
     class OsdEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'Off': ('off', '07eb0'),
             'Short': ('short', '07eb1'),
             'Full': ('full', '07eb2'),
@@ -502,7 +508,7 @@ class YamahaControl:
 
     class DspEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'straight': ('straight', '07ee0'),
             'concert hall': ('concert hall', '07ee5'),
             'jazz club': ('jazz club', '07eec'),
@@ -595,7 +601,7 @@ class YamahaControl:
 
     class MuteEntity(EntityBase):
         options = {
-            # Yamaha-ID: (HASS-State, Set-Cmd)
+            # Yamaha-ID: (MQTT-State, Set-Cmd)
             'On': ('on', '07ea2'),  # Mute
             'Off': ('off', '07ea3')  # Unmute
         }
