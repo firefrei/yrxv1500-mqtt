@@ -5,7 +5,6 @@
 
 import logging
 import logging.config
-import time
 import re
 import subprocess
 import socket
